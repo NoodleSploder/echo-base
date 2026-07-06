@@ -4151,3 +4151,76 @@ log.
    location would be the strongest next validation step for both the
    decoder and this persistence layer.
 2. Same environment blocks as ever.
+
+## Added: AIS decoding (marine VHF) + vessel persistence
+
+Fourth from-scratch decoder this session, closing the ROADMAP's "AIS
+decoding" item. Turned out to be the most reusable of the four: AIS
+uses the *same* HDLC framing as AX.25/APRS -- 0x7E flags, 5-ones bit
+stuffing, CRC-16/X-25 FCS (reused `ax25.compute_fcs` directly,
+unchanged) -- just GMSK/9600-baud instead of AFSK1200/two-tone. And
+unlike ADS-B, AIS's baseband bit signal *is* exactly what
+`fm_discriminator` already recovers (a frequency deviation whose sign
+is the NRZI polarity), so `_decode_ais` is audio-rate, reusing the
+same `fm_discriminator(complex_samples, decimation)` call APRS/SAME
+already make -- no new capture-rate path needed the way ADS-B required.
+
+Scoped to message type + MMSI only (bits 0-5 and 8-37 of the destuffed
+payload, MSB-first per ITU-R M.1371's own bit numbering -- distinct
+from the byte-packed LSB-first representation the FCS check uses).
+Full field decoding (position, course, speed -- different layouts per
+message type 1-27) deliberately deferred, same "achievable subset
+first" shape as every other decoder gap in this project.
+
+**Two bugs caught by the synthetic round-trip tests, not left in**:
+1. Test padding used a constant DC level before/after the frame, which
+   coincidentally matched the leading flag's own initial NRZI level
+   for several bits, masking it from detection -- fixed by padding
+   with random bipolar noise instead (what a real receiver's noise
+   floor actually looks like, not a clean symbol level). This was a
+   test-construction bug, not a decoder bug, but it initially looked
+   exactly like one.
+2. The actual decoder's FCS reconstruction used the MSB-first
+   `_bits_to_int` helper (correct for AIS payload fields) on the
+   trailing FCS bits too, when the FCS bytes need the same LSB-first
+   `_pack_bytes_lsb_first` packing the payload bytes use for the CRC
+   check itself -- a real bug, caught because the synthetic frames
+   failed FCS validation until fixed.
+
+`ais_vessels` table (migration 0010) + `services/ais_vessels.py` +
+`GET /api/ais/vessels` + `AisVesselsPanel`, same upsert-on-event shape
+as `adsb_aircraft.py`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 141/141 passing (5 for
+  the decoder: synthetic frames round-tripping across 3 message
+  types, noise rejection, dedup; 5 for vessel persistence: round trip,
+  repeated-sightings-increment, per-receiver filter, REST, auth; plus
+  a REST start/stop test confirming the decode loop runs against a
+  real capture without crashing).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: tuned the actual RTL2838 to both AIS channels
+  (161.975MHz and 162.025MHz) and listened for a combined 50 seconds.
+  Along the way, hit a real (unrelated) environmental snag: a genuine
+  zombie `rtl_sdr` subprocess from earlier in the session was still
+  holding the USB device, causing the first attempt's capture to
+  fail silently (`alive: False, read_count: 0`, no exception logged --
+  the thread just hit EOF immediately). Confirmed via `usb_claim_interface
+  error -6` on a direct `rtl_sdr` invocation, killed the zombie, and
+  the retry worked cleanly (`alive: True`, 1165 reads over 30s). No
+  real AIS message decoded at either channel -- no confirmed marine
+  VHF traffic in range of whatever antenna is attached here, same
+  category as every other real-traffic gap (APRS/SAME/ADS-B) already
+  in this diary. Receiver state restored to defaults afterward.
+
+## Next Steps
+
+1. Full AIS field decoding (position/course/speed) once a real vessel
+   message has actually been decoded to build/verify against.
+2. If real marine VHF or 1090MHz reception ever becomes available,
+   both AIS and ADS-B are ready to validate against it.
+3. Same environment blocks as ever -- this closes out essentially
+   every concretely-scoped, hardware-testable-here item across the
+   phases touched this session.

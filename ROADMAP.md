@@ -209,10 +209,20 @@ Completed
   + message count per ICAO address, same upsert-on-event shape as
   `aprs_stations` -- `GET /api/adsb/aircraft`, `AdsbAircraftPanel` on
   the Receivers page).
+- AIS decoding (161-162MHz VHF, GMSK): `decoders/ais.py` -- HDLC/NRZI
+  framing identical to AX.25 (same CRC-16/X-25 FCS, reused directly),
+  audio-rate like APRS/SAME (AIS's GMSK baseband is exactly what
+  `fm_discriminator` already recovers, just at 9600 baud). Extracts
+  message type + MMSI only; full field decoding (position, course,
+  speed -- different layouts per message type) deliberately deferred.
+  Plus `ais_vessels` persistence (same shape as `adsb_aircraft`) and an
+  `AisVesselsPanel`. Verified via synthetic round-trip tests; no real
+  vessel decoded yet in this environment (no confirmed marine VHF
+  traffic in range here) -- same category as every other real-traffic
+  gap in this project.
 
 Remaining
 
-- AIS decoding (161-162MHz VHF, GMSK)
 - Amateur digital modes beyond APRS (see Phase 5)
 - Weather satellite presets (APT/Meteor-M2 downlink decoding, Phase 7)
 - HF monitoring (outside RTL-SDR's tuning range without an upconverter)

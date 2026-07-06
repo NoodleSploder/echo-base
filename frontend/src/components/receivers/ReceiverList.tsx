@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { discoverReceivers, listReceivers } from "../../api/receivers";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { AdsbAircraftPanel } from "./AdsbAircraftPanel";
+import { AisVesselsPanel } from "./AisVesselsPanel";
 import { ReceiverCard } from "./ReceiverCard";
 import { ReceiverInventoryPanel } from "./ReceiverInventoryPanel";
 import { ReceiverProfilesPanel } from "./ReceiverProfilesPanel";
@@ -77,6 +78,7 @@ export function ReceiverList() {
 
       <ReceiverInventoryPanel />
       <AdsbAircraftPanel />
+      <AisVesselsPanel />
     </div>
   );
 }

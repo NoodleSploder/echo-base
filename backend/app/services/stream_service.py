@@ -34,6 +34,7 @@ import numpy as np
 from app.core.events import EventBus
 from app.plugins.receiver import IqStreamHandle
 from app.services.decoders.afsk import Afsk1200Decoder
+from app.services.decoders.ais import AisDecoder
 from app.services.decoders.aprs_position import parse_aprs_position
 from app.services.decoders.ax25 import format_callsign, format_path, parse_ax25_frame
 from app.services.decoders.mode_s import ModeSDecoder
@@ -114,6 +115,8 @@ class _ReceiverCapture:
         self._same_decoder: SameDecoder | None = None
         self._ads_b_enabled = False
         self._ads_b_decoder: ModeSDecoder | None = None
+        self._ais_enabled = False
+        self._ais_decoder: AisDecoder | None = None
         self._signal_detection_enabled = False
         self._signal_margin_db = 0.0
         self._signal_center_frequency_hz: int | None = None
@@ -154,6 +157,7 @@ class _ReceiverCapture:
             "aprs_enabled": self._aprs_enabled,
             "same_enabled": self._same_enabled,
             "ads_b_enabled": self._ads_b_enabled,
+            "ais_enabled": self._ais_enabled,
             "signal_detection_enabled": self._signal_detection_enabled,
             "occupancy_enabled": self._occupancy_enabled,
         }
@@ -166,6 +170,7 @@ class _ReceiverCapture:
             and not self._aprs_enabled
             and not self._same_enabled
             and not self._ads_b_enabled
+            and not self._ais_enabled
             and not self._signal_detection_enabled
             and not self._occupancy_enabled
         )
@@ -194,6 +199,13 @@ class _ReceiverCapture:
     def disable_ads_b(self) -> None:
         self._ads_b_enabled = False
         self._ads_b_decoder = None
+
+    def enable_ais(self) -> None:
+        self._ais_enabled = True
+
+    def disable_ais(self) -> None:
+        self._ais_enabled = False
+        self._ais_decoder = None
 
     def enable_signal_detection(self, margin_db: float, center_frequency_hz: int | None) -> None:
         self._signal_detection_enabled = True
@@ -330,6 +342,9 @@ class _ReceiverCapture:
 
                 if self._ads_b_enabled:
                     self._decode_ads_b(complex_samples, sample_rate_hz)
+
+                if self._ais_enabled:
+                    self._decode_ais(complex_samples, decimation)
         except Exception:
             logger.exception("Capture worker for '%s' crashed", self.receiver_id)
         finally:
@@ -388,6 +403,17 @@ class _ReceiverCapture:
             self._ads_b_decoder = ModeSDecoder(sample_rate_hz)
         for message in self._ads_b_decoder.feed(complex_samples):
             self._event_bus.emit("AdsbMessage", source=self.receiver_id, data=message)
+
+    def _decode_ais(self, complex_samples: np.ndarray, decimation: int) -> None:
+        # Audio-rate like APRS/SAME (AIS's GMSK baseband is exactly what
+        # `fm_discriminator` recovers, just at 9600 baud instead of a
+        # 1200/520baud tone) -- tune to a marine AIS channel (e.g.
+        # 161.975MHz/162.025MHz) for this to decode anything real.
+        if self._ais_decoder is None:
+            self._ais_decoder = AisDecoder(AUDIO_SAMPLE_RATE_HZ)
+        audio = fm_discriminator(complex_samples, decimation)
+        for message in self._ais_decoder.feed(audio):
+            self._event_bus.emit("AisMessage", source=self.receiver_id, data=message)
 
     def _detect_signals(self, magnitude_db: np.ndarray, sample_rate_hz: int) -> None:
         assert self._peak_tracker is not None
@@ -571,6 +597,22 @@ class StreamService:
             if capture is None:
                 return
             capture.disable_ads_b()
+            await self._drop_if_idle(receiver_id)
+
+    async def enable_ais(self, receiver_id: str) -> None:
+        """Same idempotent/EventBus-based shape as `enable_aprs`, emitting
+        `AisMessage` events instead. Tune to a marine AIS channel (e.g.
+        161.975MHz/162.025MHz) for this to decode anything real."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_ais()
+
+    async def disable_ais(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_ais()
             await self._drop_if_idle(receiver_id)
 
     async def enable_signal_detection(

@@ -5,12 +5,14 @@ import {
   getSignalHistory,
   setPpmCorrection,
   startAdsBDecoding,
+  startAisDecoding,
   startAprsDecoding,
   startOccupancy,
   startReceiver,
   startSameDecoding,
   startSignalDetection,
   stopAdsBDecoding,
+  stopAisDecoding,
   stopAprsDecoding,
   stopOccupancy,
   stopReceiver,
@@ -61,6 +63,8 @@ export function ReceiverCard({
   const [sameBusy, setSameBusy] = useState(false);
   const [adsBEnabled, setAdsBEnabled] = useState(false);
   const [adsBBusy, setAdsBBusy] = useState(false);
+  const [aisEnabled, setAisEnabled] = useState(false);
+  const [aisBusy, setAisBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -171,6 +175,20 @@ export function ReceiverCard({
       setAdsBEnabled((prev) => !prev);
     } finally {
       setAdsBBusy(false);
+    }
+  }
+
+  async function handleToggleAis() {
+    setAisBusy(true);
+    try {
+      if (aisEnabled) {
+        await stopAisDecoding(receiver.id);
+      } else {
+        await startAisDecoding(receiver.id);
+      }
+      setAisEnabled((prev) => !prev);
+    } finally {
+      setAisBusy(false);
     }
   }
 
@@ -289,6 +307,7 @@ export function ReceiverCard({
         if (typeof health.aprs_enabled === "boolean") setAprsEnabled(health.aprs_enabled);
         if (typeof health.same_enabled === "boolean") setSameEnabled(health.same_enabled);
         if (typeof health.ads_b_enabled === "boolean") setAdsBEnabled(health.ads_b_enabled);
+        if (typeof health.ais_enabled === "boolean") setAisEnabled(health.ais_enabled);
         if (typeof health.signal_detection_enabled === "boolean") {
           setSignalDetectionEnabled(health.signal_detection_enabled);
         }
@@ -541,6 +560,18 @@ export function ReceiverCard({
               title="Needs a wideband capture (tune to 1090MHz, sample rate >=2MS/s) to decode anything real -- decoded aircraft appear in the Activity Feed and System Log widgets"
             >
               {adsBEnabled ? "ADS-B Decoding On" : "Decode ADS-B"}
+            </button>
+            <button
+              onClick={() => void handleToggleAis()}
+              disabled={aisBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                aisEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Tune to a marine AIS channel (161.975MHz/162.025MHz) to decode anything real -- decoded vessels appear in the Activity Feed and System Log widgets"
+            >
+              {aisEnabled ? "AIS Decoding On" : "Decode AIS"}
             </button>
           </div>
         )}

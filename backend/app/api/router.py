@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     adsb,
+    ais,
     aprs,
     audio,
     auth,
@@ -35,3 +36,4 @@ api_router.include_router(audio.router)
 api_router.include_router(recordings.router)
 api_router.include_router(aprs.router)
 api_router.include_router(adsb.router)
+api_router.include_router(ais.router)
