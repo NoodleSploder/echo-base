@@ -3638,3 +3638,45 @@ EventBus subscriber" shape as `signal_history.py`.
 2. A real position *history* (not just last-known) if a track/
    breadcrumb view is ever wanted.
 3. Same environment blocks as ever.
+
+## Added: signal_detections retention/pruning
+
+Closes the "no automatic pruning/retention policy" gap flagged as
+Outstanding Work in the signal-history entry above -- that table gets
+one row per detection for as long as signal detection runs on any
+receiver, unlike `aprs_stations` (upserted, naturally bounded by
+distinct callsigns), so it needed an actual retention policy rather
+than growing forever in a long-running deployment.
+
+- New `history` config block (`config.example.yaml`):
+  `signal_detection_retention_days` (default 30) and
+  `prune_interval_hours` (default 24).
+- `signal_history.prune_signal_detections(retention_days)`: a plain
+  DELETE ... WHERE detected_at < cutoff, returns rows deleted.
+- A background `asyncio.create_task` loop in `main.py`'s lifespan
+  (`_prune_loop`), started at startup, cancelled cleanly at shutdown
+  (`task.cancel()` + awaited under `contextlib.suppress`). Sleeps for
+  the full interval *before* its first prune, not after, so a normal
+  restart doesn't immediately re-run a prune that likely just ran.
+  Runs on a timer rather than per-insert, since a DELETE on every
+  single detection would add overhead disproportionate to how rarely
+  pruning actually needs to happen.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 101/101 passing (1 new:
+  inserts one record 90 days old and one recent, prunes with a
+  30-day retention window, confirms only the old one is deleted).
+- **Real hardware/process check**: restarted the live backend with
+  the new background task wired in, confirmed clean startup (no
+  exceptions) and clean shutdown (task cancellation doesn't hang the
+  lifespan teardown) via the actual running process, not just the
+  test suite's simulated lifespan.
+
+## Next Steps
+
+1. Consider the same "last-seen" pruning for `aprs_stations` eventually
+   (stale entries from months-inactive stations linger in the table,
+   though the `minutes` query filter already hides them from the
+   Messaging Center's "known stations" strip by default).
+2. Same environment blocks as ever.

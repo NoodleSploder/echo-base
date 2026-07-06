@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,7 +29,7 @@ from app.schemas.common import fail
 from app.services.aprs_stations import persist_aprs_station
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
-from app.services.signal_history import persist_signal_detected
+from app.services.signal_history import persist_signal_detected, prune_signal_detections
 from app.services.stream_service import StreamService
 from app.websocket.manager import ConnectionManager
 
@@ -66,6 +67,24 @@ async def _bootstrap_admin(settings: Settings) -> None:
             " You will be required to change this password after login.\n"
             "==============================================================\n"
         )
+
+
+async def _prune_loop(retention_days: int, interval_hours: int) -> None:
+    """Runs `prune_signal_detections` on a fixed interval for the life of
+    the process, rather than on every insert (which would mean an extra
+    DELETE query per detection). Sleeps first so a normal restart
+    doesn't immediately re-run a prune that likely just ran."""
+    interval_seconds = max(60, interval_hours * 3600)
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            deleted = await prune_signal_detections(retention_days)
+            if deleted:
+                logger.info(
+                    "Pruned %d signal detection record(s) older than %d days", deleted, retention_days
+                )
+        except Exception:
+            logger.exception("Signal detection pruning failed")
 
 
 @asynccontextmanager
@@ -117,6 +136,10 @@ async def lifespan(app: FastAPI):
 
     await _bootstrap_admin(settings)
 
+    prune_task = asyncio.create_task(
+        _prune_loop(settings.history.signal_detection_retention_days, settings.history.prune_interval_hours)
+    )
+
     logger.info(
         "Echo Base startup complete",
         extra={"metadata": {"plugins_loaded": len(plugin_manager.plugins)}},
@@ -125,6 +148,9 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down Echo Base")
+    prune_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await prune_task
     recording_service.shutdown()
     stream_service.shutdown()
     plugin_manager.shutdown_all()

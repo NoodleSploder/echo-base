@@ -4,10 +4,12 @@ in-memory /api/events history which is bounded and lost on restart.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.core.events import Event
-from app.services.signal_history import persist_signal_detected, query_signal_history
+from app.services.signal_history import persist_signal_detected, prune_signal_detections, query_signal_history
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,3 +89,24 @@ async def test_signal_history_via_rest_reflects_real_detection(client, admin_use
 async def test_signal_history_requires_auth(client):
     resp = await client.get("/api/receivers/mock:0/signal-history")
     assert resp.status_code == 401
+
+
+async def test_prune_deletes_only_old_records(client):
+    old_event = Event(
+        type="SignalDetected",
+        source="mock:0",
+        data={"frequency_offset_hz": 1.0, "power_db": 1.0},
+        timestamp=datetime.now(UTC) - timedelta(days=90),
+    )
+    recent_event = Event(
+        type="SignalDetected", source="mock:0", data={"frequency_offset_hz": 2.0, "power_db": 2.0}
+    )
+    await persist_signal_detected(old_event)
+    await persist_signal_detected(recent_event)
+
+    deleted = await prune_signal_detections(retention_days=30)
+    assert deleted == 1
+
+    records = await query_signal_history("mock:0")
+    assert len(records) == 1
+    assert records[0].power_db == pytest.approx(2.0)

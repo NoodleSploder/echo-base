@@ -81,6 +81,15 @@ class RecordingSettings(BaseModel):
     directory: str = str(DATA_DIR / "recordings")
 
 
+class HistorySettings(BaseModel):
+    # `signal_detections` grows one row per detection for as long as
+    # signal detection runs on any receiver -- unlike `aprs_stations`
+    # (upserted, naturally bounded by distinct callsigns), this needs
+    # active pruning or it grows unbounded in a long-running deployment.
+    signal_detection_retention_days: int = 30
+    prune_interval_hours: int = 24
+
+
 class YamlConfigSource(PydanticBaseSettingsSource):
     """Pydantic-settings source that reads a single YAML file, if present."""
 
@@ -117,6 +126,7 @@ class Settings(BaseSettings):
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     recordings: RecordingSettings = Field(default_factory=RecordingSettings)
+    history: HistorySettings = Field(default_factory=HistorySettings)
 
     @classmethod
     def settings_customise_sources(

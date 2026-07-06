@@ -49,3 +49,10 @@ plugins:
 
 recordings:
   directory: ../data/recordings
+
+history:
+  # signal_detections grows one row per detection for as long as signal
+  # detection runs on any receiver -- pruned on this schedule so it
+  # doesn't grow unbounded in a long-running deployment.
+  signal_detection_retention_days: 30
+  prune_interval_hours: 24

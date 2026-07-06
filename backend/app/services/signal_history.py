@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.events import Event
 from app.db.models.signal_detection import SignalDetectionRecord
@@ -51,3 +51,20 @@ async def query_signal_history(
             .limit(limit)
         )
         return list(result.scalars().all())
+
+
+async def prune_signal_detections(retention_days: int) -> int:
+    """Deletes `SignalDetectionRecord` rows older than `retention_days`.
+    Returns the number of rows deleted. Called periodically from a
+    background task (see `main.py`) rather than on every insert, since
+    that would mean an extra DELETE query on every single detection --
+    this table has no other pruning path, unlike `aprs_stations`, which
+    is upserted and naturally bounded by distinct callsigns."""
+    cutoff = datetime.now(UTC) - timedelta(days=retention_days)
+    session_factory = get_session_factory()
+    async with session_factory() as db:
+        result = await db.execute(
+            delete(SignalDetectionRecord).where(SignalDetectionRecord.detected_at < cutoff)
+        )
+        await db.commit()
+        return result.rowcount or 0
