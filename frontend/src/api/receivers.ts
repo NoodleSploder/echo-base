@@ -54,3 +54,16 @@ export const getSignalHistory = (id: string, minutes = 60) =>
   api.get<SignalHistoryRecord[]>(
     `/api/receivers/${encodeURIComponent(id)}/signal-history?minutes=${minutes}`,
   );
+
+export interface CaptureHealth {
+  active: boolean;
+  alive?: boolean;
+  read_count?: number;
+  last_read_age_seconds?: number | null;
+  spectrum_subscribers?: number;
+  audio_subscribers?: number;
+  iq_subscribers?: number;
+}
+
+export const getCaptureHealth = (id: string) =>
+  api.get<CaptureHealth>(`/api/receivers/${encodeURIComponent(id)}/capture-health`);

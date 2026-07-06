@@ -122,6 +122,8 @@ class _ReceiverCapture:
         self._handle: IqStreamHandle | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
+        self._last_read_at: float | None = None
+        self._read_count = 0
 
     def is_alive(self) -> bool:
         """False once the capture thread has exited on its own (e.g. the
@@ -130,6 +132,23 @@ class _ReceiverCapture:
         `is_idle()`-false capture would otherwise keep matching subscribers
         against a thread that will never broadcast anything again."""
         return self._thread is not None and self._thread.is_alive()
+
+    def health(self) -> dict:
+        """A point-in-time snapshot for `GET .../capture-health` -- exists
+        specifically so a stuck-but-not-yet-dead capture (or the
+        dead-capture-reuse bug this was added alongside) is visible from
+        the API/UI instead of silently producing no audio/frames."""
+        last_read_age_seconds = (
+            time.monotonic() - self._last_read_at if self._last_read_at is not None else None
+        )
+        return {
+            "alive": self.is_alive(),
+            "read_count": self._read_count,
+            "last_read_age_seconds": last_read_age_seconds,
+            "spectrum_subscribers": len(self._spectrum_subscribers),
+            "audio_subscribers": sum(len(s) for s in self._audio_subscribers.values()),
+            "iq_subscribers": len(self._iq_subscribers),
+        }
 
     def is_idle(self) -> bool:
         return (
@@ -248,6 +267,9 @@ class _ReceiverCapture:
                 raw = self._handle.read(bytes_per_read)
                 if not raw:
                     break
+
+                self._last_read_at = time.monotonic()
+                self._read_count += 1
 
                 if self._iq_subscribers:
                     self._broadcast(self._iq_subscribers, raw)
@@ -556,6 +578,13 @@ class StreamService:
         from `ReceiverStatus.state`, which today is just a manual flag
         toggled by start()/stop() and doesn't know about this at all."""
         return receiver_id in self._captures
+
+    def capture_health(self, receiver_id: str) -> dict | None:
+        """None if there's no capture at all for this receiver right now
+        (nobody's subscribed to anything) -- distinct from a capture that
+        exists but whose worker thread has died, which is `alive: False`."""
+        capture = self._captures.get(receiver_id)
+        return capture.health() if capture is not None else None
 
     def shutdown(self) -> None:
         """Stops every active capture; called once on application shutdown."""

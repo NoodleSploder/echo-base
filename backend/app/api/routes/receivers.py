@@ -264,3 +264,17 @@ async def get_signal_history(
             for r in records
         ]
     )
+
+
+@router.get("/{receiver_id}/capture-health")
+async def get_capture_health(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """None/`active: false` if nobody's currently subscribed to anything
+    for this receiver -- not an error, just "no capture running"."""
+    health = stream_service.capture_health(receiver_id)
+    if health is None:
+        return ok({"active": False})
+    return ok({"active": True, **health})

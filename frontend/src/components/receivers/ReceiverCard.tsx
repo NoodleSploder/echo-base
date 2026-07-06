@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
+  getCaptureHealth,
   getOccupancy,
   getSignalHistory,
   startAprsDecoding,
@@ -58,6 +59,7 @@ export function ReceiverCard({
     null,
   );
   const [historyCount, setHistoryCount] = useState<number | null>(null);
+  const [captureStalled, setCaptureStalled] = useState(false);
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -199,6 +201,36 @@ export function ReceiverCard({
     };
   }, [occupancyEnabled, receiver.id]);
 
+  const captureShouldBeActive =
+    listening || recording || aprsEnabled || sameEnabled || signalDetectionEnabled || occupancyEnabled;
+
+  useEffect(() => {
+    if (!captureShouldBeActive) {
+      setCaptureStalled(false);
+      return;
+    }
+    let cancelled = false;
+    async function poll() {
+      try {
+        const health = await getCaptureHealth(receiver.id);
+        if (cancelled) return;
+        const stalled =
+          health.active &&
+          (health.alive === false ||
+            (typeof health.last_read_age_seconds === "number" && health.last_read_age_seconds > 3));
+        setCaptureStalled(stalled);
+      } catch {
+        // Transient poll failure; don't flip the badge on a single miss.
+      }
+    }
+    void poll();
+    const interval = setInterval(poll, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [captureShouldBeActive, receiver.id]);
+
   async function handleToggleRecording() {
     setRecordingBusy(true);
     setRecordingError(null);
@@ -267,6 +299,15 @@ export function ReceiverCard({
             Stop
           </button>
         </div>
+
+        {captureStalled && (
+          <p
+            className="rounded-md bg-red-500/10 px-2 py-1 text-xs text-red-400"
+            title="The capture feeding Listen/Record/decoders has stopped producing samples. Toggling a feature off and back on restarts it."
+          >
+            Capture stalled -- no samples received recently
+          </p>
+        )}
 
         {supportsAudio && (
           <div className="flex items-center gap-2 border-t border-base-700 pt-3">

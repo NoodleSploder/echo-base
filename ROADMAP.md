@@ -158,13 +158,14 @@ Remaining
 Completed
 
 - Frequency, gain, bandwidth, sample rate (lifecycle state, via REST)
+- Live IQ sample streaming (`StreamService`, feeding spectrum/audio/decoders/recording)
+- Capture health monitoring (`GET /api/receivers/{id}/capture-health`: worker-thread liveness,
+  last-read age, subscriber counts -- surfaced in the UI as a "Capture stalled" badge)
 
 Remaining
 
-- Actual IQ sample streaming (current `start`/`stop` model device lifecycle only, no sample pipeline yet)
 - Profiles
 - Calibration
-- Health monitoring per-device (beyond basic state)
 
 ---
 

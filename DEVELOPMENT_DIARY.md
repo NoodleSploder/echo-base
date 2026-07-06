@@ -3395,3 +3395,50 @@ All test recordings created during this verification were deleted
 afterward via the real `DELETE /api/recordings/{filename}` endpoint,
 consistent with every other real-hardware verification entry in this
 diary.
+
+## Added: Capture health monitoring (Phase 2)
+
+A direct follow-on to the previous entry's bug (a crashed capture
+worker silently poisoning every feature sharing its receiver_id,
+forever, with zero visible error). The `is_alive()` fix stops it from
+persisting, but a capture can still legitimately stall for other
+reasons (device unplugged mid-stream, a future regression of the same
+class) -- there was no way to *see* that from the API or UI, only to
+notice "nothing's happening" after the fact.
+
+- `_ReceiverCapture` now tracks `last_read_at` (monotonic) and a
+  running `read_count`, updated every successful `handle.read()` in
+  the capture loop.
+- `_ReceiverCapture.health()` / `StreamService.capture_health()`:
+  worker-thread liveness, last-read age in seconds, and
+  spectrum/audio/IQ subscriber counts.
+- `GET /api/receivers/{id}/capture-health` (any authenticated role,
+  same as `GET /api/receivers/{id}`): `{"active": false}` if nobody's
+  subscribed to anything, otherwise the full health snapshot above.
+- Frontend (`ReceiverCard.tsx`): polls this every 4s whenever
+  Listen/Record/APRS/SAME/signal-detection/occupancy is toggled on,
+  and shows a "Capture stalled -- no samples received recently" badge
+  if the thread has died or gone >3s without a read.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 95/95 passing (no test
+  changes needed; this is additive instrumentation, not new decode
+  logic).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings);
+  `tsc -b && vite build` clean.
+- **Real hardware**: tuned the actual RTL2838 to 100.3MHz and started
+  a recording. `capture-health` correctly reported `active: false`
+  before subscribing, `active: true, alive: true, read_count: 27,
+  last_read_age_seconds: 0.38` ~1.5s into the recording, and back to
+  `active: false` immediately after stopping. Test recording deleted
+  afterward via the real API, same as every other hardware-verified
+  entry.
+
+## Next Steps
+
+1. Receiver profile calibration (Phase 2's remaining item).
+2. Revisit Phase 3 (Radio Manager) once real CAT/serial hardware is
+   available; revisit browser-based UI verification once a display or
+   headless browser is available (`ROADMAP.md`'s Known Environment
+   Blocks).
