@@ -13,7 +13,7 @@ import uuid
 from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger("echo_base.events")
@@ -27,7 +27,7 @@ class Event:
     source: str
     data: dict[str, Any] = field(default_factory=dict)
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,7 +80,9 @@ class EventBus:
         """Thread-safe fire-and-forget publish, for use by plugins running off the event loop."""
         event = Event(type=event_type, source=source, data=data or {})
         if self._loop is None:
-            logger.warning("EventBus.emit('%s') called before the event loop was bound; dropping.", event_type)
+            logger.warning(
+                "EventBus.emit('%s') called before the event loop was bound; dropping.", event_type
+            )
             return
         asyncio.run_coroutine_threadsafe(self.publish(event), self._loop)
 

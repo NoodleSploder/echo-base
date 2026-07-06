@@ -54,6 +54,5 @@ async def logout(response: Response, settings: Settings = Depends(get_settings))
 
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)) -> dict:
-    return ok(
-        CurrentUser(id=user.id, username=user.username, role=user.role.value, disabled=user.disabled).model_dump()
-    )
+    current = CurrentUser(id=user.id, username=user.username, role=user.role.value, disabled=user.disabled)
+    return ok(current.model_dump())

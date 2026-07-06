@@ -1,0 +1,170 @@
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  applyReceiverProfile,
+  createReceiverProfile,
+  deleteReceiverProfile,
+  listReceiverProfiles,
+} from "../../api/receiverProfiles";
+import type { ReceiverDescriptor, ReceiverProfile, ReceiverStatus } from "../../types";
+import { Card } from "../common/Card";
+
+// Saved frequency/gain presets a user can apply to any receiver in one
+// click, instead of re-typing frequency/gain by hand each time (see
+// ROADMAP.md's "Receiver Profiles" Phase 2 item).
+export function ReceiverProfilesPanel({
+  receivers,
+  onApplied,
+}: {
+  receivers: ReceiverDescriptor[];
+  onApplied: (receiverId: string, status: ReceiverStatus) => void;
+}) {
+  const [profiles, setProfiles] = useState<ReceiverProfile[]>([]);
+  const [name, setName] = useState("");
+  const [frequencyMhz, setFrequencyMhz] = useState("");
+  const [gain, setGain] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function refresh() {
+    try {
+      setProfiles(await listReceiverProfiles());
+    } catch {
+      setError("Unable to load receiver profiles.");
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function handleCreate(event: FormEvent) {
+    event.preventDefault();
+    const hz = Math.round(Number(frequencyMhz) * 1e6);
+    if (!name.trim() || !Number.isFinite(hz) || hz <= 0) return;
+    try {
+      await createReceiverProfile({ name: name.trim(), frequency_hz: hz, gain: gain.trim() || null });
+      setName("");
+      setFrequencyMhz("");
+      setGain("");
+      setError(null);
+      await refresh();
+    } catch {
+      setError("Unable to save profile.");
+    }
+  }
+
+  async function handleDelete(id: string) {
+    setBusyId(id);
+    try {
+      await deleteReceiverProfile(id);
+      await refresh();
+    } catch {
+      setError("Unable to delete profile.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleApply(profileId: string, receiverId: string) {
+    if (!receiverId) return;
+    setBusyId(profileId);
+    try {
+      onApplied(receiverId, await applyReceiverProfile(profileId, receiverId));
+      setError(null);
+    } catch {
+      setError("Unable to apply profile.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <Card title="Receiver Profiles">
+      <div className="space-y-3 text-sm">
+        {error && <p className="text-red-400">{error}</p>}
+
+        {profiles.length === 0 && <p className="text-slate-500">No saved profiles yet.</p>}
+
+        <ul className="space-y-2">
+          {profiles.map((profile) => (
+            <li
+              key={profile.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-base-700 bg-base-800/40 px-3 py-2"
+            >
+              <div>
+                <div className="font-medium text-slate-200">{profile.name}</div>
+                <div className="text-xs text-slate-500">
+                  {(profile.frequency_hz / 1e6).toFixed(4)} MHz
+                  {profile.gain ? ` · gain ${profile.gain}` : ""}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  disabled={busyId === profile.id || receivers.length === 0}
+                  defaultValue=""
+                  onChange={(event) => void handleApply(profile.id, event.target.value)}
+                  className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300"
+                >
+                  <option value="" disabled>
+                    Apply to...
+                  </option>
+                  {receivers.map((receiver) => (
+                    <option key={receiver.id} value={receiver.id}>
+                      {receiver.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={busyId === profile.id}
+                  onClick={() => void handleDelete(profile.id)}
+                  className="rounded-md px-2 py-1 text-xs text-red-400 hover:bg-red-500/10 disabled:opacity-40"
+                >
+                  Delete
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-2 border-t border-base-700 pt-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Name</label>
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="2m Calling"
+              className="w-32 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Frequency (MHz)</label>
+            <input
+              type="number"
+              step="0.0001"
+              value={frequencyMhz}
+              onChange={(event) => setFrequencyMhz(event.target.value)}
+              placeholder="146.5200"
+              className="w-28 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500">Gain</label>
+            <input
+              value={gain}
+              onChange={(event) => setGain(event.target.value)}
+              placeholder="auto"
+              className="w-20 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-md bg-accent-500/20 px-3 py-1.5 text-accent-400 hover:bg-accent-500/30"
+          >
+            Save Profile
+          </button>
+        </form>
+      </div>
+    </Card>
+  );
+}

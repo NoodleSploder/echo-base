@@ -51,6 +51,27 @@ export interface HealthStatus {
   plugins_loaded: number;
 }
 
+export interface ReceiverProfile {
+  id: string;
+  name: string;
+  frequency_hz: number;
+  sample_rate_hz: number | null;
+  bandwidth_hz: number | null;
+  gain: string | null;
+  decoder: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReceiverProfileInput {
+  name: string;
+  frequency_hz: number;
+  sample_rate_hz?: number | null;
+  bandwidth_hz?: number | null;
+  gain?: string | null;
+  decoder?: string | null;
+}
+
 export interface EchoBaseEvent {
   id: string;
   type: string;

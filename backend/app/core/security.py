@@ -1,7 +1,7 @@
 """Password hashing and session token helpers."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import bcrypt
@@ -26,7 +26,7 @@ class TokenError(Exception):
 
 
 def create_session_token(*, subject: str, role: str, settings: Settings) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": subject,
         "role": role,

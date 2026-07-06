@@ -605,3 +605,237 @@ Frontend (`frontend/`):
 4. Add CI (lint + `pytest` + frontend `tsc`/`build`) so a build break
    like this session's `@types/node` gap is caught automatically
    instead of surfacing at the next session's first build.
+
+---
+
+# 2026-07-06 — Receiver Profiles, Real Receiver Tiles, and CI
+
+## Summary
+
+Continued down this diary's own "Next Steps" list: added a basic CI
+workflow, un-mocked `ReceiverTileGridWidget`, and implemented Receiver
+Profiles end to end (backend CRUD + apply, frontend management panel)
+-- the Phase 2 item repeatedly flagged as outstanding since the very
+first walking-skeleton entry.
+
+## Motivation
+
+Three concrete gaps called out in prior entries: no CI to catch build
+breaks (this session's predecessor found one by hand), one dashboard
+widget still on `SAMPLE_RECEIVERS` despite a trivial real-data path,
+and Receiver Profiles never started despite being named in
+README/ARCHITECTURE.md and every "Next Steps" section since the
+Phase 1 entry. All three were small enough to close out in one pass
+without waiting on unbuilt subsystems (IQ streaming, Radio Manager).
+
+## Features Added
+
+Backend (`backend/`):
+
+- Receiver Profiles: `ReceiverProfile` model (owner-scoped: name,
+  frequency/sample-rate/bandwidth in Hz, gain, decoder), migration
+  `0003_add_receiver_profiles.py`, and
+  `GET/POST/PUT/DELETE /api/receiver-profiles[/{id}]` plus
+  `POST /api/receiver-profiles/{id}/apply/{receiver_id}`, which calls
+  the existing `ReceiverService.tune`/`set_gain` and returns the
+  resulting live `ReceiverStatus` (`app/db/models/receiver_profile.py`,
+  `app/schemas/receiver_profile.py`, `app/api/routes/receiver_profiles.py`).
+- `.github/workflows/ci.yml`: two jobs, `backend` (`pip install -r
+  requirements.txt -r requirements-dev.txt && pytest`) and `frontend`
+  (`npm install && npm run build`, which runs `tsc -b` first). No
+  linting yet -- neither ruff/flake8 nor ESLint config exists in this
+  repo today, so CI only covers what's already enforced locally.
+
+Frontend (`frontend/`):
+
+- `ReceiverTileGridWidget` now calls `GET /api/receivers` +
+  `GET /api/receivers/{id}` (same 15s poll pattern as
+  `ReceiversPanelWidget`/`SystemStatusWidget`) instead of
+  `SAMPLE_RECEIVERS`, with a real state badge
+  (idle/streaming/error/disconnected) and an empty state. The
+  waterfall canvas itself is still explicitly labeled "sample" per
+  tile, since there's no IQ streaming transport to feed it yet.
+- `ReceiverProfilesPanel` (new, mounted on the Receivers page below the
+  existing `ReceiverCard` grid): save a named frequency/gain preset,
+  list saved profiles, apply one to any discovered receiver via a
+  dropdown (calls the new apply endpoint and feeds the resulting
+  status back into `ReceiverList`'s shared state), delete a profile.
+  `frontend/src/api/receiverProfiles.ts` and the `ReceiverProfile`/
+  `ReceiverProfileInput` types support it.
+
+## Architecture Decisions
+
+- **Profiles are owner-scoped (`owner_id` FK to `users.id`), not
+  global.** Every profile CRUD/apply route filters by
+  `ReceiverProfile.owner_id == current_user.id` and 404s rather than
+  403s on another user's profile ID, consistent with how the rest of
+  the API treats "not yours" the same as "doesn't exist" to avoid
+  leaking existence.
+- **Apply requires operator+ (`require_role(ADMINISTRATOR, OPERATOR)`),
+  same as start/stop/tune**, since it drives real hardware; plain
+  CRUD on profiles (save/list/delete a preset) only requires being
+  logged in, since saving a preset touches no hardware.
+- **Applying a profile is just `tune` + optional `set_gain`, not a new
+  service-layer concept.** `ReceiverService` already has the
+  primitives; a "profile" is purely a saved bundle of arguments to
+  them, so no new receiver-service method was needed.
+
+## Files Created / Modified
+
+- `backend/app/db/models/receiver_profile.py`,
+  `backend/app/db/models/__init__.py` (registers the new model for
+  `create_all`), `backend/app/schemas/receiver_profile.py`,
+  `backend/app/api/routes/receiver_profiles.py`,
+  `backend/app/api/router.py`,
+  `backend/alembic/versions/0003_add_receiver_profiles.py`,
+  `backend/tests/test_receiver_profiles.py` (new)
+- `frontend/src/api/receiverProfiles.ts` (new),
+  `frontend/src/types/index.ts` -- `ReceiverProfile`/`ReceiverProfileInput`
+- `frontend/src/components/receivers/ReceiverProfilesPanel.tsx` (new),
+  `ReceiverList.tsx` -- mounts the new panel and shares receiver/status state.
+- `frontend/src/components/dashboard/ReceiverTileGridWidget.tsx` --
+  un-mocked.
+- `frontend/src/components/dashboard/ReceiversPanelWidget.tsx` --
+  un-mocked in the same pass as the previous entry; noted here since
+  the diary entry hadn't been written yet when it landed.
+- `.github/workflows/ci.yml` (new)
+
+## Verification
+
+- Backend: fresh `.venv` created from `requirements*.txt`, `pytest` --
+  19/19 passing (15 previous + 4 new `test_receiver_profiles.py` cases:
+  CRUD round trip, 404 on unknown/foreign profile, apply-tunes-receiver
+  against the test suite's mock receiver plugin, auth-required).
+- Frontend: `tsc -b && vite build` clean (via rootless-podman Node 22
+  container) after both widget/panel changes.
+- Full stack, real hardware: killed the stale pre-existing `uvicorn`
+  process (it was serving live traffic on this machine's public
+  hostname without the new routes) and restarted via `start.sh`. Then,
+  against the real backend -- not just the test client -- logged in,
+  created a profile via `POST /api/receiver-profiles`, listed it,
+  called `POST /api/receiver-profiles/{id}/apply/rtl_sdr:00000001`
+  (the actual attached RTL-SDR device on this machine), and confirmed
+  the receiver's live status afterward reported `frequency_hz:
+  14074000` -- the profile genuinely tuned physical hardware, not a
+  mock. Deleted the test profile afterward. Cleaned up stray podman
+  `npm run dev` containers left over from earlier restarts in this
+  session.
+- No display/headless browser available in this environment, so the
+  new `ReceiverProfilesPanel` UI and the dashboard grid's visual
+  behavior are still unverified by actually driving a browser.
+
+## Outstanding Work
+
+- No lint tooling (ruff/ESLint) configured yet, so CI doesn't catch
+  style/lint issues, only test failures and type/build breaks.
+- Alerts, Digital Mode Radio, Messaging Center, Digital Decodes,
+  Recordings, and both spectrum widgets remain sample data pending
+  their own backend subsystems (Phase 3+).
+- No browser-based visual verification of any frontend work has been
+  done yet in this environment (no display/headless browser present).
+- IQ streaming and Phase 3 (Radio Manager / Hamlib) remain unstarted.
+
+## Next Steps
+
+1. Add ruff (backend) and ESLint (frontend) configs and wire them into
+   `ci.yml` now that the workflow skeleton exists.
+2. Decide on an IQ streaming transport (still blocking real spectrum
+   widgets and a truly live `MiniWaterfall`) -- this has been
+   recommended since the very first walking-skeleton entry.
+3. Start Phase 3 (Radio Manager / Hamlib integration), following the
+   same plugin-framework + owner-scoped-resource pattern established
+   by the Receiver Manager and Receiver Profiles.
+4. Get real browser verification of frontend work in this environment
+   once a display or headless browser is available.
+
+---
+
+# 2026-07-06 — Lint Tooling: ruff + ESLint Wired Into CI
+
+## Summary
+
+Closed the CI gap left by the previous entry: added ruff to the
+backend and a flat-config ESLint setup to the frontend, cleaned up
+every finding on the existing codebase, and wired both into
+`ci.yml` alongside the existing pytest/build jobs.
+
+## Features Added
+
+- Backend: `ruff` in `requirements-dev.txt`, `[tool.ruff]`/
+  `[tool.ruff.lint]` in `pyproject.toml` (line-length 110, target
+  py312, `E`/`F`/`I`/`UP` rule selection), `ruff check .` added as a
+  CI step before `pytest`.
+- Frontend: `eslint.config.js` (flat config: `@eslint/js` +
+  `typescript-eslint` recommended + `eslint-plugin-react-hooks` +
+  `eslint-plugin-react-refresh`), `npm run lint` script, CI step
+  between `npm install` and `npm run build`.
+
+## Architecture Decisions
+
+- **`eslint-plugin-react-hooks` pinned to `^5.0.0`, not the `^4.x`
+  most React 18 tutorials still reference**, because v4 only declares
+  an ESLint 8 peer dependency and hard-conflicts with ESLint 9's flat
+  config (`npm install` failed with `ERESOLVE` until this was bumped).
+  v5 supports both flat config and ESLint 9.
+- **Ruby-selected rule set kept to `E/F/I/UP`** (pycodestyle errors,
+  pyflakes, import sorting, pyupgrade) rather than pulling in a wider
+  preset -- enough to catch real bugs (unused imports, undefined
+  names) and modernize syntax without adding stylistic rules the team
+  hasn't agreed on yet (docstring conventions, complexity limits).
+
+## Bugs Fixed
+
+- Ruff's autofix (`ruff check --fix`) modernized 34 pre-existing
+  findings across the backend (mostly `datetime.now(timezone.utc)` ->
+  `datetime.now(UTC)`, `Union[X, None]` -> `X | None`, and import
+  reordering in the two Alembic migrations). Three `E501` line-length
+  violations weren't auto-fixable and were wrapped by hand in
+  `app/api/routes/auth.py`, `app/core/events.py`, and `app/main.py`.
+  None of these were behavior changes.
+
+## Files Created / Modified
+
+- `backend/pyproject.toml`, `backend/requirements-dev.txt`
+- `backend/app/api/routes/auth.py`, `backend/app/core/events.py`,
+  `backend/app/core/security.py`, `backend/app/db/models/user.py`,
+  `backend/app/db/models/receiver_profile.py`, `backend/app/main.py`,
+  `backend/alembic/versions/0002_add_dashboard_layout.py`,
+  `backend/alembic/versions/0003_add_receiver_profiles.py` --
+  ruff-autofixed and/or manually wrapped long lines.
+- `frontend/eslint.config.js` (new), `frontend/package.json` --
+  `lint` script + `@eslint/js`, `eslint`, `eslint-plugin-react-hooks`,
+  `eslint-plugin-react-refresh`, `globals`, `typescript-eslint`.
+- `.github/workflows/ci.yml` -- `ruff check .` and `npm run lint`
+  steps added.
+
+## Verification
+
+- Backend: `ruff check .` -- all checks passed; `pytest` -- 19/19
+  still passing after the autofix/manual-wrap pass.
+- Frontend: fresh `npm install` (via rootless-podman Node 22
+  container) succeeded once `eslint-plugin-react-hooks` was bumped to
+  `^5.0.0`; `npm run lint` reports 0 errors, 2 pre-existing warnings
+  (`react-refresh/only-export-components` on `AuthContext.tsx` and
+  `EventStreamContext.tsx`, both from the common
+  context-module-also-exports-a-hook pattern -- left as-is, not worth
+  restructuring for a lint warning); `npm run build` still clean.
+
+## Outstanding Work
+
+- The two `react-refresh` warnings are unresolved by design (see
+  above) -- could be silenced with a targeted `eslint-disable` if they
+  become noisy, but aren't errors today.
+- Everything else outstanding is unchanged from the previous entry:
+  no browser verification available in this environment, most
+  dashboard widgets still sample data pending their backend
+  subsystems, IQ streaming and Phase 3 (Radio Manager) not started.
+
+## Next Steps
+
+1. Decide on an IQ streaming transport -- now the single most-repeated
+   outstanding item across every recent entry.
+2. Start Phase 3 (Radio Manager / Hamlib integration).
+3. Continue un-mocking dashboard widgets as their backend subsystems
+   land.
+4. Get real browser verification of frontend work once a display or
+   headless browser is available in this environment.

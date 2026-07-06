@@ -68,7 +68,9 @@ async def _bootstrap_admin(settings: Settings) -> None:
 async def lifespan(app: FastAPI):
     settings = get_settings()
     configure_logging(settings)
-    logger.info("Starting Echo Base %s", __version__, extra={"metadata": {"environment": settings.environment}})
+    logger.info(
+        "Starting Echo Base %s", __version__, extra={"metadata": {"environment": settings.environment}}
+    )
 
     if settings.security.secret_key == DEFAULT_INSECURE_SECRET_KEY:
         if settings.environment == "production":
