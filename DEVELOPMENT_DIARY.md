@@ -4609,3 +4609,45 @@ slice).
   screenshot predates this change; the underlying behavior (Leaflet's
   `LatLng.wrap()`) is a documented, stable Leaflet API, not new
   surface area to re-verify from scratch.
+
+## Fixed: multiple repeated world map copies visible when zoomed out
+
+Real browser testing again (screenshot after zooming out): the map
+showed the world tiled side-by-side ~7 times horizontally instead of
+one continuously-wrapping world. This is normal Leaflet tile-layer
+behavior, not a bug in the tile layer itself -- at a given zoom, the
+whole world is a fixed `256 * 2^zoom` px square, and Leaflet renders
+however many copies of that square are needed to fill the visible
+container. With no zoom floor set, zooming out on a container much
+wider than it is tall (this page's map panel) inevitably shows several
+repeats side by side.
+
+**Fix** (`GeospatialPage.tsx`): compute a dynamic `minZoom` from the
+container's actual pixel size -- specifically
+`ceil(log2(max(width, height) / 256))` -- and pass it to the map,
+recomputing on window resize. Using the *larger* of width/height
+(not just height, even though that's what was initially asked for) is
+what actually prevents the repeats for a wide-but-short container: a
+height-only floor would size the world to fit the container's
+*shorter* dimension, leaving it narrower than the container's width --
+exactly the repeat-tiling problem, not a fix for it. Explained this
+distinction back before implementing rather than building the
+literal-but-wrong version.
+
+Also added `worldCopyJump: true` (Leaflet's default is actually
+`false`) so panning past +-180deg longitude continues seamlessly from
+the other side -- a single circularly-wrapping world -- instead of
+drifting into unbounded coordinate space, and a latitude-clamped/
+longitude-unbounded `maxBounds` (`maxBoundsViscosity: 1.0`) so vertical
+panning stops at the poles (where Web Mercator can't sanely render
+anyway) without fighting the horizontal wrap.
+
+## Verification
+
+- Frontend: `npm run build`/`npm run lint` clean.
+- Not yet re-screenshotted -- this is the second real-browser-driven
+  fix in a row; both were caught by the user's actual testing, not by
+  anything build/lint could catch, underscoring how much this
+  particular page benefits from real visual verification versus every
+  other backend-heavy feature this session where API-level checks
+  were sufficient.

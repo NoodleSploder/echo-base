@@ -102,7 +102,23 @@ export class SatelliteTrackLayer implements MapLayer {
       const point = this.positionAt(new Date(t));
       if (!point) continue;
 
-      if (previousLon !== null && Math.abs(point.lon - previousLon) > 180) {
+      // A real antimeridian crossing has consecutive longitudes on
+      // opposite sides of +-180deg with both close to it (e.g. +179.5
+      // then -179.5). A simple "|delta| > 180" check also fires
+      // falsely near-polar passes: satellite.js's eciToGeodetic always
+      // returns longitude wrapped to [-180, 180], but right over a
+      // pole the sub-satellite longitude is nearly undefined and can
+      // swing wildly between samples even though the ground track
+      // barely moved -- that's not a real date-line crossing, and
+      // splitting the line there (rather than at the actual seam)
+      // is exactly the spurious gap a near-polar orbit like NOAA 15's
+      // (98.5deg inclination) would otherwise produce every pass.
+      const crossedAntimeridian =
+        previousLon !== null &&
+        Math.sign(point.lon) !== Math.sign(previousLon) &&
+        Math.abs(point.lon) > 170 &&
+        Math.abs(previousLon) > 170;
+      if (crossedAntimeridian) {
         if (current.length > 1) segments.push(current);
         current = [];
       }

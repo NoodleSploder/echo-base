@@ -9,6 +9,21 @@ import type { MapLayer } from "../geo/types";
 
 const INITIAL_CENTER: [number, number] = [39.5, -98.35]; // continental US, a reasonable default
 const INITIAL_ZOOM = 4;
+const TILE_SIZE_PX = 256; // Leaflet/Web Mercator's standard tile size -- the whole world is TILE_SIZE_PX * 2^zoom px square
+
+/** The lowest zoom at which one full world copy is at least as large
+ * (in both dimensions) as the map container -- below this, Leaflet
+ * has no choice but to tile multiple world copies side by side to
+ * fill the visible area, which is the "chained maps" artifact rather
+ * than a single continuously-wrapping world. Using the *larger* of
+ * width/height (not just height) is what actually prevents that for
+ * a wide-but-short container: a height-only constraint would let the
+ * world end up much narrower than a wide container, which is exactly
+ * the repeat-tiling problem, not a fix for it. */
+function minZoomToFillContainer(widthPx: number, heightPx: number): number {
+  const largestDimension = Math.max(widthPx, heightPx, 1);
+  return Math.max(0, Math.ceil(Math.log2(largestDimension / TILE_SIZE_PX)));
+}
 
 // Full-screen Leaflet map hosting every registered layer (see
 // geo/LayerRegistry.ts) -- this component only knows the common
@@ -33,8 +48,33 @@ export function GeospatialPage() {
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    const map = L.map(mapContainerRef.current, { zoomControl: true }).setView(INITIAL_CENTER, INITIAL_ZOOM);
+    const container = mapContainerRef.current;
+    const initialMinZoom = minZoomToFillContainer(container.clientWidth, container.clientHeight);
+
+    const map = L.map(container, {
+      zoomControl: true,
+      // Panning past +-180deg longitude seamlessly continues from the
+      // other side (a single circularly-wrapping world) instead of
+      // drifting into unbounded coordinate space.
+      worldCopyJump: true,
+      minZoom: Math.max(INITIAL_ZOOM, initialMinZoom),
+      // Latitude is clamped (Web Mercator can't sanely render past
+      // ~85deg anyway); longitude is deliberately unbounded so the
+      // circular wrap above isn't fighting a hard edge.
+      maxBounds: L.latLngBounds([-85.06, -Infinity], [85.06, Infinity]),
+      maxBoundsViscosity: 1.0,
+    }).setView(INITIAL_CENTER, Math.max(INITIAL_ZOOM, initialMinZoom));
     L.control.scale({ imperial: false }).addTo(map);
+
+    // The min-zoom-to-avoid-repeats calculation depends on container
+    // size, which changes on window resize (this page is always
+    // full-height, but width can change, e.g. a narrower browser
+    // window) -- recompute and tighten the floor if needed.
+    const handleResize = () => {
+      const nextMinZoom = minZoomToFillContainer(container.clientWidth, container.clientHeight);
+      map.setMinZoom(nextMinZoom);
+    };
+    window.addEventListener("resize", handleResize);
     map.on("mousemove", (event: L.LeafletMouseEvent) => {
       // Leaflet lets the map scroll continuously across repeated
       // "world copies" past +-180deg longitude (so panning feels
@@ -64,6 +104,7 @@ export function GeospatialPage() {
     setLayerEnabled(initialEnabled);
 
     return () => {
+      window.removeEventListener("resize", handleResize);
       for (const layer of layers) layer.destroy();
       map.remove();
       mapRef.current = null;
