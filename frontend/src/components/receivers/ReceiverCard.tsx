@@ -4,11 +4,13 @@ import {
   getOccupancy,
   getSignalHistory,
   setPpmCorrection,
+  startAdsBDecoding,
   startAprsDecoding,
   startOccupancy,
   startReceiver,
   startSameDecoding,
   startSignalDetection,
+  stopAdsBDecoding,
   stopAprsDecoding,
   stopOccupancy,
   stopReceiver,
@@ -57,6 +59,8 @@ export function ReceiverCard({
   const [aprsBusy, setAprsBusy] = useState(false);
   const [sameEnabled, setSameEnabled] = useState(false);
   const [sameBusy, setSameBusy] = useState(false);
+  const [adsBEnabled, setAdsBEnabled] = useState(false);
+  const [adsBBusy, setAdsBBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -153,6 +157,20 @@ export function ReceiverCard({
       setSameEnabled((prev) => !prev);
     } finally {
       setSameBusy(false);
+    }
+  }
+
+  async function handleToggleAdsB() {
+    setAdsBBusy(true);
+    try {
+      if (adsBEnabled) {
+        await stopAdsBDecoding(receiver.id);
+      } else {
+        await startAdsBDecoding(receiver.id);
+      }
+      setAdsBEnabled((prev) => !prev);
+    } finally {
+      setAdsBBusy(false);
     }
   }
 
@@ -270,6 +288,7 @@ export function ReceiverCard({
         setCaptureStalled(stalled);
         if (typeof health.aprs_enabled === "boolean") setAprsEnabled(health.aprs_enabled);
         if (typeof health.same_enabled === "boolean") setSameEnabled(health.same_enabled);
+        if (typeof health.ads_b_enabled === "boolean") setAdsBEnabled(health.ads_b_enabled);
         if (typeof health.signal_detection_enabled === "boolean") {
           setSignalDetectionEnabled(health.signal_detection_enabled);
         }
@@ -510,6 +529,18 @@ export function ReceiverCard({
               title="Decoded NOAA Weather Radio SAME alerts appear in the Activity Feed, System Log, and Alerts widgets"
             >
               {sameEnabled ? "SAME Decoding On" : "Decode SAME"}
+            </button>
+            <button
+              onClick={() => void handleToggleAdsB()}
+              disabled={adsBBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                adsBEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Needs a wideband capture (tune to 1090MHz, sample rate >=2MS/s) to decode anything real -- decoded aircraft appear in the Activity Feed and System Log widgets"
+            >
+              {adsBEnabled ? "ADS-B Decoding On" : "Decode ADS-B"}
             </button>
           </div>
         )}

@@ -24,6 +24,11 @@ export const startSameDecoding = (id: string) =>
 export const stopSameDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/same/stop`);
 
+export const startAdsBDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/ads-b/start`);
+export const stopAdsBDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/ads-b/stop`);
+
 export const startSignalDetection = (id: string, marginDb: number) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/signal-detection/start`, {
     margin_db: marginDb,
@@ -67,6 +72,7 @@ export interface CaptureHealth {
   iq_subscribers?: number;
   aprs_enabled?: boolean;
   same_enabled?: boolean;
+  ads_b_enabled?: boolean;
   signal_detection_enabled?: boolean;
   occupancy_enabled?: boolean;
   triggered_recording_armed?: boolean;

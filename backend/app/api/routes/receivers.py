@@ -240,6 +240,33 @@ async def stop_same_decoding(
     return ok({"message": "SAME decoding disabled.", "receiver_id": receiver_id})
 
 
+@router.post("/{receiver_id}/ads-b/start")
+async def start_ads_b_decoding(
+    receiver_id: str,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    """Needs a genuinely wideband capture to decode anything real --
+    tune to 1090000000 and `set_sample_rate` to at least 2000000 first
+    (see `decoders/mode_s.py`'s docstring). Enabling it at the default
+    240kHz spectrum/audio-oriented rate won't error, it just won't
+    resolve any real Mode S pulses."""
+    await service.status(receiver_id)
+    await stream_service.enable_ads_b(receiver_id)
+    return ok({"message": "ADS-B decoding enabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/ads-b/stop")
+async def stop_ads_b_decoding(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await stream_service.disable_ads_b(receiver_id)
+    return ok({"message": "ADS-B decoding disabled.", "receiver_id": receiver_id})
+
+
 @router.post("/{receiver_id}/signal-detection/start")
 async def start_signal_detection(
     receiver_id: str,

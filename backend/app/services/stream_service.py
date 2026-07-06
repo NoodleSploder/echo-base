@@ -36,6 +36,7 @@ from app.plugins.receiver import IqStreamHandle
 from app.services.decoders.afsk import Afsk1200Decoder
 from app.services.decoders.aprs_position import parse_aprs_position
 from app.services.decoders.ax25 import format_callsign, format_path, parse_ax25_frame
+from app.services.decoders.mode_s import ModeSDecoder
 from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
 from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator
@@ -111,6 +112,8 @@ class _ReceiverCapture:
         self._aprs_decoder: Afsk1200Decoder | None = None
         self._same_enabled = False
         self._same_decoder: SameDecoder | None = None
+        self._ads_b_enabled = False
+        self._ads_b_decoder: ModeSDecoder | None = None
         self._signal_detection_enabled = False
         self._signal_margin_db = 0.0
         self._signal_center_frequency_hz: int | None = None
@@ -150,6 +153,7 @@ class _ReceiverCapture:
             "iq_subscribers": len(self._iq_subscribers),
             "aprs_enabled": self._aprs_enabled,
             "same_enabled": self._same_enabled,
+            "ads_b_enabled": self._ads_b_enabled,
             "signal_detection_enabled": self._signal_detection_enabled,
             "occupancy_enabled": self._occupancy_enabled,
         }
@@ -161,6 +165,7 @@ class _ReceiverCapture:
             and not self._iq_subscribers
             and not self._aprs_enabled
             and not self._same_enabled
+            and not self._ads_b_enabled
             and not self._signal_detection_enabled
             and not self._occupancy_enabled
         )
@@ -182,6 +187,13 @@ class _ReceiverCapture:
     def disable_same(self) -> None:
         self._same_enabled = False
         self._same_decoder = None
+
+    def enable_ads_b(self) -> None:
+        self._ads_b_enabled = True
+
+    def disable_ads_b(self) -> None:
+        self._ads_b_enabled = False
+        self._ads_b_decoder = None
 
     def enable_signal_detection(self, margin_db: float, center_frequency_hz: int | None) -> None:
         self._signal_detection_enabled = True
@@ -315,6 +327,9 @@ class _ReceiverCapture:
 
                 if self._same_enabled:
                     self._decode_same(complex_samples, decimation)
+
+                if self._ads_b_enabled:
+                    self._decode_ads_b(complex_samples, sample_rate_hz)
         except Exception:
             logger.exception("Capture worker for '%s' crashed", self.receiver_id)
         finally:
@@ -363,6 +378,16 @@ class _ReceiverCapture:
                     "location_names": [describe_location(loc) for loc in fields["locations"]],
                 },
             )
+
+    def _decode_ads_b(self, complex_samples: np.ndarray, sample_rate_hz: int) -> None:
+        # Unlike APRS/SAME, this works on the raw IQ envelope directly at
+        # the capture's native rate -- Mode S is PPM on the RF pulse
+        # itself, not an audio-rate FSK/AFSK tone, so there's no
+        # `fm_discriminator`/decimation step here at all.
+        if self._ads_b_decoder is None or self._ads_b_decoder.sample_rate_hz != sample_rate_hz:
+            self._ads_b_decoder = ModeSDecoder(sample_rate_hz)
+        for message in self._ads_b_decoder.feed(complex_samples):
+            self._event_bus.emit("AdsbMessage", source=self.receiver_id, data=message)
 
     def _detect_signals(self, magnitude_db: np.ndarray, sample_rate_hz: int) -> None:
         assert self._peak_tracker is not None
@@ -529,6 +554,23 @@ class StreamService:
             if capture is None:
                 return
             capture.disable_same()
+            await self._drop_if_idle(receiver_id)
+
+    async def enable_ads_b(self, receiver_id: str) -> None:
+        """Same idempotent/EventBus-based shape as `enable_aprs`, emitting
+        `AdsbMessage` events instead. Needs a genuinely wideband capture
+        (>=2MS/s, tuned to 1090000000) to actually decode anything --
+        see `decoders/mode_s.py`'s docstring."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_ads_b()
+
+    async def disable_ads_b(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_ads_b()
             await self._drop_if_idle(receiver_id)
 
     async def enable_signal_detection(

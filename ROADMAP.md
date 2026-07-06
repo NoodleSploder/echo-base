@@ -190,15 +190,24 @@ Completed
   APRS 2m, Marine VHF ch16, 2m amateur calling, airband guard,
   ADS-B 1090MHz) -- one-click "Add" turns any of them into a real,
   editable/deletable saved profile via the existing create/apply flow.
-  All within RTL-SDR tuning range; ADS-B/AIS/HF entries below are
-  listed since a preset just means "tune here", not "decode this" --
-  actual ADS-B/AIS decoding is still unbuilt (see Remaining).
+  All within RTL-SDR tuning range; AIS/HF entries below are listed
+  since a preset just means "tune here", not "decode this" -- ADS-B
+  decoding is now built (see Completed below), AIS decoding is still
+  unbuilt.
+- ADS-B (Mode S extended squitter) decoding: `decoders/mode_s.py`
+  (CRC-24 validated DF17/18 -> ICAO address + type code, PPM-demodulated
+  directly off the raw IQ envelope at native sample rate -- no
+  audio-rate decimation, unlike APRS/SAME) plus a "Decode ADS-B" toggle
+  on `ReceiverCard`. Needs a genuinely wideband capture (>=2MS/s, tuned
+  to 1090MHz) to resolve anything -- verified correct via synthetic
+  round-trip tests; no real aircraft message decoded yet in this
+  environment (see the diary entry for why that's not conclusively a
+  bug). Callsign (BDS 2,0) and position (needs even/odd CPR frame
+  pairing) decoding are deliberately not built yet, same "ship the
+  achievable subset first" reasoning as APRS's Mic-E gap.
 
 Remaining
 
-- ADS-B decoding (Mode S/1090MHz -- needs a much higher sample rate
-  capture path than the current FM/AM-oriented one; see
-  `suggested_profiles.py`'s ADS-B entry, which is spectrum/IQ-only for now)
 - AIS decoding (161-162MHz VHF, GMSK)
 - Amateur digital modes beyond APRS (see Phase 5)
 - Weather satellite presets (APT/Meteor-M2 downlink decoding, Phase 7)

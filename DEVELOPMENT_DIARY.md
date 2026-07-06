@@ -4038,3 +4038,80 @@ inventory entry above.
    complete for everything testable without additional SDR hardware
    or a browser -- next slice needs a fresh look across all phases in
    `ROADMAP.md`.
+
+## Added: ADS-B (Mode S) decoding -- DF17/18, ICAO address + type code
+
+Third real from-scratch decoder this project, after AFSK1200/AX.25
+(APRS) and SAME. Structurally different from both: Mode S is PPM
+(pulse position modulation) directly on the RF envelope at 1090MHz,
+not an audio-rate FSK/AFSK tone -- so `decoders/mode_s.py` works on
+`abs(iq)` at the capture's *native* sample rate, with no
+`fm_discriminator`/decimation step at all, wired into
+`_ReceiverCapture._run()` as a fourth decode path alongside
+APRS/SAME/signal-detection. Needs a genuinely wideband capture
+(`set_sample_rate` >=2,000,000, tuned to 1,090,000,000) to resolve the
+0.5us pulse structure -- the default 240kHz spectrum/audio-oriented
+rate isn't remotely close, documented in both the decoder's and the
+REST route's docstrings.
+
+Scoped down like the APRS/SAME decoders were: DF17/18 extended
+squitters only, validated by the standard Mode S CRC-24, extracting
+ICAO address + ADS-B type code. Callsign decoding (BDS 2,0
+identification messages) and position (needs even/odd CPR frame
+pairing across time, real complexity) are deliberately deferred --
+same "ship the achievable subset first" reasoning as APRS's Mic-E gap.
+
+**A real bug caught by testing, not left in**: the first CRC-24
+implementation was self-inconsistent -- computing a CRC, appending it,
+and re-checking should always yield a zero remainder for a linear
+CRC, and it didn't. Root cause: the bit-serial LFSR XORed each new
+message bit into the *top* of the shift register before the
+check-and-shift step (matching the "byte pre-loaded then blindly
+shifted" structure that's easy to reach for) instead of shifting the
+register left and OR-ing the new bit in at the *bottom*, checking the
+bit that was about to be shifted *out* to decide whether to XOR the
+polynomial in. Cross-checked against an independent big-integer
+polynomial-division implementation to confirm the fix, then confirmed
+the standard "append CRC, re-check, expect zero" property actually
+held.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 125/125 passing (7 new:
+  CRC self-consistency, a synthetic DF17 frame -- built bit-by-bit,
+  CRC-computed, and rendered as a real PPM+preamble IQ waveform --
+  round-tripping back to the exact DF/ICAO/type-code across four type
+  codes, noise producing zero false positives, dedup-on-repeat, plus
+  a REST start/stop test confirming the decode loop runs against a
+  real capture -- the mock plugin's random-noise IQ -- without
+  crashing).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: confirmed the actual RTL2838 sustains a clean
+  2MS/s capture at 1090MHz (`rtl_sdr` directly: exactly
+  8,000,000 bytes for 4,000,000 samples requested, no overflow
+  warnings). Enabled ADS-B decoding through the real app for 20s at
+  auto gain and 45s at max manual gain (49.6) -- zero real aircraft
+  messages decoded either time. A spectrum snapshot during the first
+  window did show one anomalous ~17dB pulse against a ~3-4dB
+  baseline, suggesting *some* RF activity happens near 1090MHz here,
+  but not enough to confirm or rule out real reception. Given the
+  antenna bundled with this dongle is not 1090MHz-optimized and
+  there's no confirmed line-of-sight to aircraft from wherever it's
+  attached, a real decode failing here isn't conclusive evidence of a
+  decoder bug -- same category of unresolved real-world gap as APRS/
+  SAME's "zero real packets received," which is why the synthetic
+  round-trip tests (and the CRC bug they caught) are the primary
+  correctness evidence for this decoder, not the live listen.
+  Receiver state (frequency/sample-rate/gain) restored to its prior
+  defaults afterward.
+
+## Next Steps
+
+1. If a directional 1090MHz antenna or a location with confirmed line-
+   of-sight to air traffic becomes available, re-run the real listen
+   test -- that's the strongest remaining validation this decoder
+   could get.
+2. Callsign (BDS 2,0) and position (CPR) decoding, once DF17/18 +
+   ICAO extraction has a real confirmed decode to build on.
+3. Same environment blocks as ever.
