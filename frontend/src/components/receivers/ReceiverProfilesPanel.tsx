@@ -26,6 +26,7 @@ export function ReceiverProfilesPanel({
   const [frequencyMhz, setFrequencyMhz] = useState("");
   const [gain, setGain] = useState("");
   const [marginDb, setMarginDb] = useState("");
+  const [occupancyMarginDb, setOccupancyMarginDb] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -71,17 +72,23 @@ export function ReceiverProfilesPanel({
     const hz = Math.round(Number(frequencyMhz) * 1e6);
     if (!name.trim() || !Number.isFinite(hz) || hz <= 0) return;
     const parsedMargin = marginDb.trim() ? Number(marginDb) : null;
+    const parsedOccupancyMargin = occupancyMarginDb.trim() ? Number(occupancyMarginDb) : null;
     try {
       await createReceiverProfile({
         name: name.trim(),
         frequency_hz: hz,
         gain: gain.trim() || null,
         margin_db: parsedMargin !== null && Number.isFinite(parsedMargin) ? parsedMargin : null,
+        occupancy_margin_db:
+          parsedOccupancyMargin !== null && Number.isFinite(parsedOccupancyMargin)
+            ? parsedOccupancyMargin
+            : null,
       });
       setName("");
       setFrequencyMhz("");
       setGain("");
       setMarginDb("");
+      setOccupancyMarginDb("");
       setError(null);
       await refresh();
     } catch {
@@ -140,6 +147,9 @@ export function ReceiverProfilesPanel({
                   {(profile.frequency_hz / 1e6).toFixed(4)} MHz
                   {profile.gain ? ` · gain ${profile.gain}` : ""}
                   {profile.margin_db != null ? ` · detect @ ${profile.margin_db}dB` : ""}
+                  {profile.occupancy_margin_db != null
+                    ? ` · occupancy @ ${profile.occupancy_margin_db}dB`
+                    : ""}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -246,6 +256,22 @@ export function ReceiverProfilesPanel({
               step="1"
               value={marginDb}
               onChange={(event) => setMarginDb(event.target.value)}
+              placeholder="optional"
+              className="w-24 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label
+              className="text-xs text-slate-500"
+              title="Auto-enables occupancy tracking at this margin when applied"
+            >
+              Occupancy margin (dB)
+            </label>
+            <input
+              type="number"
+              step="1"
+              value={occupancyMarginDb}
+              onChange={(event) => setOccupancyMarginDb(event.target.value)}
               placeholder="optional"
               className="w-24 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
             />

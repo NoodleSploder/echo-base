@@ -61,6 +61,7 @@ export interface ReceiverProfile {
   gain: string | null;
   decoder: string | null;
   margin_db: number | null;
+  occupancy_margin_db: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +73,7 @@ export interface ReceiverProfileInput {
   bandwidth_hz?: number | null;
   gain?: string | null;
   decoder?: string | null;
+  occupancy_margin_db?: number | null;
   margin_db?: number | null;
 }
 

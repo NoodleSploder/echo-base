@@ -80,6 +80,32 @@ async def test_apply_profile_with_margin_db_enables_signal_detection(client, adm
     await app.state.stream_service.disable_signal_detection("mock:0")
 
 
+async def test_apply_profile_with_occupancy_margin_db_enables_occupancy(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    create = await client.post(
+        "/api/receiver-profiles",
+        json={
+            "name": "FM Broadcast",
+            "frequency_hz": 100300000,
+            "gain": "auto",
+            "occupancy_margin_db": 8.0,
+        },
+    )
+    profile_id = create.json()["data"]["id"]
+    assert create.json()["data"]["occupancy_margin_db"] == 8.0
+
+    apply = await client.post(f"/api/receiver-profiles/{profile_id}/apply/mock:0")
+    assert apply.status_code == 200
+
+    health_after = await client.get("/api/receivers/mock:0/capture-health")
+    assert health_after.json()["data"]["occupancy_enabled"] is True
+
+    from app.main import app
+
+    await app.state.stream_service.disable_occupancy("mock:0")
+
+
 async def test_profiles_require_auth(client):
     resp = await client.get("/api/receiver-profiles")
     assert resp.status_code == 401

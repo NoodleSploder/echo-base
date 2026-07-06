@@ -139,5 +139,7 @@ async def apply_profile(
     # carry a margin_db (it didn't when decoder auto-enable first shipped).
     if profile.margin_db is not None:
         await stream_service.enable_signal_detection(receiver_id, profile.margin_db, profile.frequency_hz)
+    if profile.occupancy_margin_db is not None:
+        await stream_service.enable_occupancy(receiver_id, profile.occupancy_margin_db, profile.frequency_hz)
     status = await service.status(receiver_id)
     return _status_response(status, receiver_id, stream_service)

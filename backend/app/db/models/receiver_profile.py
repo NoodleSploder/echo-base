@@ -30,6 +30,9 @@ class ReceiverProfile(Base):
     # profile also auto-enables signal detection at this margin, same
     # "decoder" auto-enable pattern applied to APRS/SAME.
     margin_db: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Same idea as margin_db, but for occupancy tracking instead of
+    # discrete signal detection -- also a noise-floor-relative margin.
+    occupancy_margin_db: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

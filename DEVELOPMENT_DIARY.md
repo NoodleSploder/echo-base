@@ -3877,3 +3877,38 @@ stamp+upgrade will be needed again.
 2. Keep the create_all()-doesn't-alter-existing-tables gap in mind for
    the next schema change to an existing table.
 3. Same environment blocks as ever.
+
+## Added: profile-carried occupancy_margin_db auto-enables occupancy tracking
+
+Follows the exact same pattern as the margin_db/signal-detection entry
+above, extended to occupancy tracking (the other Next Step flagged
+there).
+
+- `receiver_profiles.occupancy_margin_db` (migration 0007).
+- `apply_profile`: if set, also calls
+  `stream_service.enable_occupancy(receiver_id, occupancy_margin_db,
+  profile.frequency_hz)` -- only ever turns it on, same reasoning as
+  every other profile auto-enable.
+- `ReceiverProfilesPanel` gets an "Occupancy margin (dB)" field next
+  to "Detect margin (dB)"; saved profiles show "occupancy @ NdB" when set.
+- Applied migration 0007 to the live dev DB the same way as 0006
+  (`alembic upgrade head` -- already stamped at 0006 from the prior
+  entry, so no re-stamp needed this time).
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 112/112 passing (1 new:
+  apply with `occupancy_margin_db` -> capture-health reports
+  `occupancy_enabled: true`).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: created a real profile with
+  `occupancy_margin_db: 8.0`, applied it to the actual RTL2838,
+  confirmed `capture-health` reported `occupancy_enabled: true` with
+  no separate start call. Cleaned up.
+
+## Next Steps
+
+1. Same environment blocks as ever -- both profile-decoder and
+   profile-detection-margin follow-ups are now done; next slice needs
+   a fresh look at `ROADMAP.md`.

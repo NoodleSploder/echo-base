@@ -13,6 +13,7 @@ class ReceiverProfileCreate(BaseModel):
     gain: str | None = None
     decoder: str | None = None
     margin_db: float | None = None
+    occupancy_margin_db: float | None = None
 
 
 class ReceiverProfileUpdate(ReceiverProfileCreate):
@@ -28,6 +29,7 @@ class ReceiverProfileSchema(BaseModel):
     gain: str | None
     decoder: str | None
     margin_db: float | None
+    occupancy_margin_db: float | None
     created_at: datetime
     updated_at: datetime
 
