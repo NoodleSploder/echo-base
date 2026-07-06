@@ -4878,3 +4878,97 @@ badge) and a one-line "Solar wind: 412 km/s, Bz 1 nT" readout.
    actual propagation math).
 3. ADS-B/AIS position decoding remain the two biggest real data gaps
    for their respective map layers.
+
+## Added: ADS-B CPR position decoding
+
+The biggest of the two real remaining map-data gaps called out
+repeatedly in earlier diary entries (`mode_s.py`'s docstring
+explicitly deferred this: "needs even/odd CPR frame pairing across
+time"). Built it as a standalone, pure-math module
+(`decoders/adsb_position.py`) before touching the live decoder at all,
+verified against a genuinely independent source of truth rather than
+self-consistency: the classic even/odd ADS-B message pair
+(8D40621D58C382D690C8AC2863A7 / 8D40621D58C386435CC412692AD6) that
+appears across the ADS-B decoding literature (Junzi Sun's pyModeS test
+suite, RTCA DO-260B worked examples), with an independently-documented
+correct answer (52.2572, 3.91937 -- central Netherlands). Got that
+exact answer on the first correct implementation of the standard
+global-CPR algorithm (lat zones, `j` disambiguation term, per-latitude
+longitude-zone count via `cprNL`), which is the confidence a "reference
+example" test buys that a synthetic-round-trip test alone can't:
+synthetic tests only prove the encode and decode agree with each
+other, not that either matches the real-world standard.
+
+**Design**: `parse_airborne_position` (stateless, one ME field) is
+separate from `CprPositionResolver` (stateful, tracks the latest
+even/odd frame per ICAO address, rejects pairs more than 10s apart --
+the standard dump1090-family threshold). `ModeSDecoder.feed` calls
+both and adds `latitude`/`longitude` keys to a message dict only once
+a pair resolves -- most messages (identification-only, or the first
+half of a pair) never get one, same as real ADS-B traffic. Persistence
+(`adsb_aircraft.py`) deliberately never overwrites a known position
+with a message that doesn't have one, so a plane's last real fix
+doesn't blank out just because an identification message arrives next.
+
+**A real dead end investigating live verification, documented rather
+than hidden**: tried to verify against the real attached RTL-SDR
+(tuned to 1090MHz/2.4Msps, `POST .../ads-b/start` + `.../start`).
+First found and killed several of my own leftover manual `rtl_sdr`
+test processes competing for the one physical USB device
+(`usb_claim_interface error -6`, silently swallowed since the plugin
+runs rtl_sdr with `stderr=DEVNULL`) -- worth remembering: `pgrep -af
+rtl_sdr` before any hardware test in this environment, since orphaned
+background test processes are easy to lose track of. After clearing
+all of those, `capture-health` showed the real backend-owned
+subprocess `alive: true` (confirmed via `ps` that its PPID was the
+actual uvicorn process) but `read_count` never advanced past 0 even
+after 30+ seconds. Isolated this by testing the same receiver back at
+the default 240kHz/broadcast-FM frequency with no decoder-specific
+logic in the loop at all -- same stall, ruling out anything about the
+CPR decode work, 1090MHz, or 2.4Msps specifically. This is a
+pre-existing capture-pipeline issue in this environment, now logged in
+`ROADMAP.md`'s "Known Environment Blocks" for separate investigation,
+rather than something this feature introduced or something to paper
+over by claiming false verification.
+
+**Files added**: `backend/app/services/decoders/adsb_position.py`,
+`backend/tests/test_adsb_position.py`,
+`backend/alembic/versions/0012_add_adsb_aircraft_position.py`,
+`frontend/src/geo/layers/AdsbAircraftLayer.ts`. Extended:
+`decoders/mode_s.py` (wires the resolver into `feed`), `adsb_aircraft.py`
+(model + persistence), `api/routes/adsb.py` (serializes lat/lon),
+`frontend/src/api/adsb.ts`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 186/186 passing (7 new in
+  `test_adsb_position.py`: reference-frame parsing, the reference
+  even-anchored decode, an NL-mismatch rejection case found by
+  brute-force search rather than hand-picked -- arbitrary "far apart"
+  CPR values usually still land in the same longitude-zone count and
+  wouldn't exercise the rejection path -- resolver pairing/staleness/
+  per-aircraft independence; 1 new in `test_mode_s.py`: two full
+  synthetic PPM waveforms built from the same reference CPR values,
+  fed through the entire real pipeline end-to-end; 3 new in
+  `test_adsb_aircraft.py`: position persisted, not cleared by a
+  position-less message, updated on a newer fix).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, honestly reported**: the CPR decode math and the
+  full decode pipeline are verified correct (reference example +
+  synthetic waveform round-trip), but live over-the-air verification
+  was blocked by a pre-existing capture-thread stall unrelated to this
+  feature (see above) -- logged as a known environment block rather
+  than skipped silently.
+
+## Next Steps
+
+1. The capture-thread stall (`alive: true`, `read_count` stuck at 0,
+   reproduces at default settings with no ADS-B involved) needs
+   separate investigation before any decoder's real-traffic claims can
+   be verified live in this environment.
+2. AIS position decoding is now the last remaining "position decoding
+   deferred" gap (surface position/callsign decoding for ADS-B are
+   smaller follow-ups, not full gaps).
+3. RF Coverage propagation modeling, CME alerts/radio blackouts/HF
+   fadeouts remain unbuilt.

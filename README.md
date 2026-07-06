@@ -202,11 +202,13 @@ Built today:
 - Receiver sites -- operator-set physical location per receiver
   (a plain RTL-SDR dongle has no GPS, so this is set from the map's
   sidebar, not inferred)
+- Aircraft (ADS-B) -- real CPR position decoding (even/odd frame
+  pairing per ICAO address), off by default since it needs an active
+  wideband 1090MHz capture
 
 Layers the framework supports but don't have real position data behind
 them yet (see `ROADMAP.md`'s Phase 17 for specifics):
 
-- Aircraft (ADS-B)
 - Marine traffic (AIS)
 - Propagation / RF coverage
 - Signal reports (heat maps)

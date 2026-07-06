@@ -61,3 +61,29 @@ async def test_adsb_aircraft_via_rest(client, admin_user):
 async def test_adsb_aircraft_requires_auth(client):
     resp = await client.get("/api/adsb/aircraft")
     assert resp.status_code == 401
+
+
+async def test_position_is_persisted_when_present(client):
+    await persist_adsb_aircraft(_message_event(latitude=52.2658, longitude=3.9389))
+
+    aircraft = await list_aircraft()
+    assert aircraft[0].latitude == pytest.approx(52.2658)
+    assert aircraft[0].longitude == pytest.approx(3.9389)
+
+
+async def test_position_not_cleared_by_a_message_without_one(client):
+    await persist_adsb_aircraft(_message_event(latitude=52.2658, longitude=3.9389))
+    await persist_adsb_aircraft(_message_event(type_code=1))  # identification-only, no position
+
+    aircraft = await list_aircraft()
+    assert aircraft[0].latitude == pytest.approx(52.2658)
+    assert aircraft[0].longitude == pytest.approx(3.9389)
+
+
+async def test_position_updates_on_a_newer_fix(client):
+    await persist_adsb_aircraft(_message_event(latitude=52.2658, longitude=3.9389))
+    await persist_adsb_aircraft(_message_event(latitude=52.3, longitude=4.0))
+
+    aircraft = await list_aircraft()
+    assert aircraft[0].latitude == pytest.approx(52.3)
+    assert aircraft[0].longitude == pytest.approx(4.0)

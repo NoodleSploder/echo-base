@@ -1,14 +1,15 @@
 """Mode S / ADS-B extended squitter decoder (1090MHz).
 
-Deliberately narrower in scope than a full dump1090-equivalent: this
-decodes DF17/18 extended squitters (the ADS-B broadcast format) down
+Decodes DF17/18 extended squitters (the ADS-B broadcast format) down
 to ICAO address + downlink format + ADS-B type code, validated by the
-standard Mode S CRC-24. It does **not** decode callsigns (BDS 2,0
-identification messages) or position (needs even/odd CPR frame
-pairing across time, the same kind of complexity that made full APRS
-position decoding partial too) -- both are natural follow-ups once
-this baseline is confirmed working against real traffic, same
-"ship the achievable subset first" pattern as `aprs_position.py`.
+standard Mode S CRC-24, and -- for airborne position messages (TC
+9-18/20-22) -- a real lat/lon once an even/odd CPR frame pair for the
+same ICAO address has been seen (see `decoders/adsb_position.py` for
+the pairing/decode algorithm). It does **not** decode callsigns (BDS
+2,0 identification messages) or surface position (TC 5-8) -- natural
+follow-ups once airborne position is confirmed working against real
+traffic, same "ship the achievable subset first" pattern as
+`aprs_position.py`.
 
 Unlike AFSK1200/SAME (audio-rate FSK/AFSK decoders fed demodulated
 audio), Mode S is PPM (pulse position modulation) on the raw RF
@@ -21,7 +22,15 @@ the default 240kHz spectrum/audio-oriented rate is nowhere close.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import numpy as np
+
+from app.services.decoders.adsb_position import (
+    AIRBORNE_POSITION_TYPE_CODES,
+    CprPositionResolver,
+    parse_airborne_position,
+)
 
 CRC_POLYNOMIAL = 0xFFF409  # standard Mode S CRC-24 generator
 LONG_FRAME_BITS = 112
@@ -83,10 +92,14 @@ class ModeSDecoder:
         self._max_buffer_samples = (PREAMBLE_US + LONG_FRAME_BITS + 200) * self.samples_per_us
         self._seen: set[str] = set()
         self._seen_order: list[str] = []
+        self._position_resolver = CprPositionResolver()
 
     def feed(self, iq: np.ndarray) -> list[dict[str, object]]:
         """Returns newly-seen, CRC-valid messages as
-        `{"hex": ..., "df": ..., "icao": ..., "type_code": ...}`."""
+        `{"hex": ..., "df": ..., "icao": ..., "type_code": ...}`, plus
+        `latitude`/`longitude` once an airborne-position message (TC
+        9-18/20-22) has been paired with a recent opposite-parity CPR
+        frame from the same ICAO address (see `decoders/adsb_position.py`)."""
         mag = np.abs(iq).astype(np.float32)
         self._buffer = np.concatenate([self._buffer, mag])
         if len(self._buffer) > self._max_buffer_samples:
@@ -109,6 +122,14 @@ class ModeSDecoder:
                     if len(self._seen_order) > _MAX_SEEN:
                         oldest = self._seen_order.pop(0)
                         self._seen.discard(oldest)
+                    if decoded["type_code"] in AIRBORNE_POSITION_TYPE_CODES:
+                        frame = parse_airborne_position(bits[32:88])
+                        if frame is not None:
+                            position = self._position_resolver.update(
+                                str(decoded["icao"]), frame, datetime.now(UTC)
+                            )
+                            if position is not None:
+                                decoded["latitude"], decoded["longitude"] = position
                     results.append(decoded)
                     pos += preamble_samples + message_samples
                     continue

@@ -20,6 +20,11 @@ async def persist_adsb_aircraft(event: Event) -> None:
     type_code = event.data.get("type_code")
     if icao is None or type_code is None:
         return
+    # Only present once ModeSDecoder has paired an even/odd CPR frame
+    # for this ICAO address (see decoders/adsb_position.py) -- most
+    # messages (e.g. identification-only) never carry these.
+    latitude = event.data.get("latitude")
+    longitude = event.data.get("longitude")
 
     session_factory = get_session_factory()
     async with session_factory() as db:
@@ -35,12 +40,20 @@ async def persist_adsb_aircraft(event: Event) -> None:
                 message_count=1,
                 first_seen_at=event.timestamp,
                 last_seen_at=event.timestamp,
+                latitude=latitude,
+                longitude=longitude,
             )
             db.add(aircraft)
         else:
             aircraft.last_type_code = type_code
             aircraft.message_count += 1
             aircraft.last_seen_at = event.timestamp
+            # Only overwrite a known position with another known
+            # position -- a message without a resolved position
+            # shouldn't blank out the last real fix.
+            if latitude is not None and longitude is not None:
+                aircraft.latitude = latitude
+                aircraft.longitude = longitude
         await db.commit()
 
 

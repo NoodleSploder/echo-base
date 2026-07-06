@@ -67,7 +67,7 @@ Long-term goals include:
 These aren't abandoned -- they're blocked on resources this development environment doesn't currently have. Revisit when the resource becomes available; see `DEVELOPMENT_DIARY.md` for the entries where each was hit.
 
 - **Phase 3 (Radio Management / Hamlib).** No serial/CAT-capable transceiver is attached here (checked: no `/dev/ttyUSB*`/`/dev/ttyACM*`, no `rigctl`/`rigctld` installed). Every feature built so far has been verified against real attached hardware (an RTL-SDR receive-only dongle); starting Radio Manager without a real rig to test against would break that pattern. Needs: a CAT-capable transceiver (or a rigctld-compatible simulator) connected to whatever machine is doing the work.
-- **Real over-the-air decoder verification (APRS, SAME).** Both decoders are proven correct via synthetic encode/decode round-trip tests, but have not decoded a single real packet -- there's no guarantee of an active APRS station or NOAA Weather Radio transmitter in range of whatever antenna is attached here. Needs: real RF activity in range, or a known-good test transmission.
+- **Real over-the-air decoder verification (APRS, SAME, ADS-B).** All three decoders are proven correct via synthetic encode/decode round-trip tests, but have not decoded a single real over-the-air message -- there's no guarantee of an active APRS station, NOAA Weather Radio transmitter, or aircraft in range of whatever antenna is attached here. ADS-B specifically also hit a real capture-thread stall while investigating this: `GET .../capture-health` reports `alive: true` (the rtl_sdr subprocess is genuinely running, confirmed via `ps`) but `read_count` never advances past 0, reproducing identically at the default 240kHz/spectrum-oriented sample rate with no decoder enabled at all -- i.e. a pre-existing capture-pipeline issue in this environment, not something introduced by the CPR decode work, and not specific to 1090MHz/2.4Msps. Needs: real RF activity in range, or a known-good test transmission, *and* whatever's causing the capture thread to stop reading investigated separately.
 - **Browser-based UI/UX verification.** No display or headless browser is available in this environment, so frontend work (including the entire draggable dashboard grid and all "Listen"/level-meter/squelch UI) is verified via `tsc`/`eslint`/build success and code review, not by looking at or listening to it. Needs: a display or headless browser (e.g. Playwright) available to the development environment.
 
 ---
@@ -748,12 +748,34 @@ Remaining
 
 ## ADS-B
 
-Remaining (blocked on position decoding, not the layer framework)
+Completed
 
-- Aircraft layer needs real lat/lon, which needs CPR (compact position
-  reporting) frame-pairing decoding -- deliberately deferred when the
-  Mode S decoder was built (see the ADS-B diary entry). The framework
-  itself doesn't block this; it's a decoder gap, not a mapping one.
+- CPR (Compact Position Reporting) airborne position decoding
+  (`decoders/adsb_position.py`): `parse_airborne_position` extracts
+  the even/odd lat/lon fraction from a type-code 9-18/20-22 ME field,
+  `decode_global_position` implements the standard ICAO/RTCA global
+  CPR decode, and `CprPositionResolver` pairs the most recent even+odd
+  frame per ICAO address (rejecting pairs more than 10s apart). Wired
+  into `ModeSDecoder.feed` -- messages now carry `latitude`/`longitude`
+  once a pair resolves -- and persisted on `adsb_aircraft`
+  (`ReceiverSitesLayer`'s sibling, `AdsbAircraftLayer`, on `/map`,
+  default-off since it needs an active wideband 1090MHz capture to
+  show anything).
+- Verified against the standard, independently-documented reference
+  even/odd message pair (52.2572, 3.91937 -- central Netherlands),
+  both as pure CPR math and as a full synthetic-waveform round-trip
+  (two real PPM-encoded frames fed through preamble detection -> bit
+  slicing -> CRC -> ME field extraction -> CPR pairing).
+
+Remaining
+
+- Real over-the-air verification: attempted against the real attached
+  RTL-SDR, but hit a capture-thread stall unrelated to this feature
+  (see "Known Environment Blocks" near the top of this file) -- the
+  decode itself is verified via synthetic waveforms, not live 1090MHz
+  traffic.
+- Surface position (TC 5-8) and callsign/identification (BDS 2,0)
+  messages remain undecoded.
 
 ## AIS
 

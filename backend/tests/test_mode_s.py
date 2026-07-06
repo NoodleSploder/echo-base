@@ -82,3 +82,49 @@ def test_decoder_dedupes_repeated_message():
     second = decoder.feed(waveform)
     assert len(first) == 1
     assert second == []
+
+
+def _build_df17_position_frame(icao: int, odd: bool, lat_cpr: int, lon_cpr: int) -> list[int]:
+    df_ca = _bits_from_int((17 << 3) | 0, 8)
+    icao_bits = _bits_from_int(icao, 24)
+    # ME field: TC=11 (airborne position, barometric altitude) + SS(2) +
+    # NICsb(1) + ALT(12), all zeroed (not exercised here) + T(1) + F(1,
+    # the odd/even flag) + lat_cpr(17) + lon_cpr(17) = 56 bits.
+    me_bits = (
+        _bits_from_int(11, 5)
+        + [0] * 15  # SS + NICsb + ALT
+        + [0]  # T
+        + [1 if odd else 0]  # F
+        + _bits_from_int(lat_cpr, 17)
+        + _bits_from_int(lon_cpr, 17)
+    )
+    payload_bits = df_ca + icao_bits + me_bits
+    payload_bytes = bytes(
+        sum(payload_bits[i * 8 + j] << (7 - j) for j in range(8)) for i in range(len(payload_bits) // 8)
+    )
+    crc = crc24_remainder(payload_bytes + b"\x00\x00\x00")
+    crc_bits = _bits_from_int(crc, 24)
+    return payload_bits + crc_bits
+
+
+def test_decoder_resolves_position_from_even_odd_pair():
+    # Same reference even/odd CPR values as test_adsb_position.py
+    # (8D40621D58C382D690C8AC2863A7 / ...386435CC412692AD6), fed
+    # through two real synthesized PPM waveforms rather than calling
+    # the CPR math directly -- proves the whole pipeline (preamble
+    # detection -> bit slicing -> CRC -> ME field extraction -> CPR
+    # pairing) actually connects end to end, not just each piece in
+    # isolation.
+    icao = 0x40621D
+    even_bits = _build_df17_position_frame(icao, odd=False, lat_cpr=93000, lon_cpr=51372)
+    odd_bits = _build_df17_position_frame(icao, odd=True, lat_cpr=74158, lon_cpr=50194)
+
+    decoder = ModeSDecoder(SAMPLE_RATE_HZ)
+    even_result = decoder.feed(_synthesize_waveform(even_bits, samples_per_us=2))
+    assert len(even_result) == 1
+    assert "latitude" not in even_result[0]  # only one half of the pair so far
+
+    odd_result = decoder.feed(_synthesize_waveform(odd_bits, samples_per_us=2))
+    assert len(odd_result) == 1
+    assert odd_result[0]["latitude"] == pytest.approx(52.2658, abs=1e-3)
+    assert odd_result[0]["longitude"] == pytest.approx(3.9389, abs=1e-3)

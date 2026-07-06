@@ -7,6 +7,8 @@ export interface AdsbAircraft {
   message_count: number;
   first_seen_at: string;
   last_seen_at: string;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export const listAdsbAircraft = (minutes?: number) =>

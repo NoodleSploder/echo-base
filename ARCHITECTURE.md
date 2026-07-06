@@ -815,22 +815,27 @@ rather than erroring the whole endpoint out.
 
 ## What's built vs. what the framework merely supports
 
-Four real layers exist today: **APRS Stations** (backed by data this
+Five real layers exist today: **APRS Stations** (backed by data this
 project already decodes and persists), **Satellite Ground Track**
 (backed by TLE data this project already fetches/predicts passes
 from), **Aurora Forecast** (backed by NOAA SWPC, rendered
-server-side to a PNG), and **Receiver Sites** (backed by an
+server-side to a PNG), **Receiver Sites** (backed by an
 operator-set location on `receiver_inventory` -- deliberately never
 inferred, since a plain RTL-SDR dongle has no GPS; set via
 `PUT /api/receivers/{id}/location`, requiring the receiver to have
-been seen at least once). Every other layer described in
-`ROADMAP.md`'s Geospatial Intelligence phase -- AIS ships, ADS-B
-aircraft, RF coverage/heat maps, storm polygons -- is a real gap in
-*data*, not in the layer framework: AIS/ADS-B position decoding was
-deliberately deferred when those decoders were built (see the diary).
-The framework itself places no constraint on adding any of them; each
-is exactly the same shape of work as APRS Stations/Aurora Forecast/
-Receiver Sites were (a backend data source + a `MapLayer` subclass +
+been seen at least once), and **ADS-B Aircraft** (backed by real CPR
+position decoding -- `decoders/adsb_position.py` pairs even/odd
+Compact Position Reporting frames per ICAO address and resolves a real
+lat/lon, verified against the standard published reference decode
+example and a full synthetic-waveform round-trip; default-off since it
+needs an active wideband 1090MHz capture to show anything). Every
+other layer described in `ROADMAP.md`'s Geospatial Intelligence phase
+-- AIS ships, RF coverage/heat maps, storm polygons -- is a real gap
+in *data*, not in the layer framework: AIS position decoding remains
+deliberately deferred (see the diary). The framework itself places no
+constraint on adding any of them; each is exactly the same shape of
+work as APRS Stations/Aurora Forecast/Receiver Sites/ADS-B Aircraft
+were (a backend data source + a `MapLayer` subclass +
 one import line).
 
 ## Future extensibility

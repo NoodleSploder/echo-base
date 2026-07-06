@@ -27,6 +27,8 @@ async def list_adsb_aircraft(
                 "message_count": a.message_count,
                 "first_seen_at": a.first_seen_at.isoformat(),
                 "last_seen_at": a.last_seen_at.isoformat(),
+                "latitude": a.latitude,
+                "longitude": a.longitude,
             }
             for a in aircraft
         ]
