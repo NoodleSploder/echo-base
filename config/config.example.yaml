@@ -68,3 +68,8 @@ satellites:
   # catalog number instead of pasting TLE text by hand. Leave unset to
   # just disable that convenience; manual paste always works.
   n2yo_api_key: null
+
+space_weather:
+  # NOAA SWPC is free and keyless -- these are just refresh cadence.
+  kp_refresh_seconds: 300.0
+  aurora_refresh_seconds: 300.0

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import secrets
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from app.services.adsb_aircraft import persist_adsb_aircraft
 from app.services.ais_vessels import persist_ais_vessel
 from app.services.aprs_stations import persist_aprs_station
 from app.services.hotplug_monitor import HotplugMonitor
+from app.services.noaa_swpc import SpaceWeatherService
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.scheduled_recording import ScheduledRecordingService
@@ -93,6 +95,23 @@ async def _prune_loop(retention_days: int, interval_hours: int) -> None:
             logger.exception("Signal detection pruning failed")
 
 
+async def _periodic_refresh_loop(
+    refresh: Callable[[], Awaitable[None]], interval_seconds: float, label: str
+) -> None:
+    """Calls `refresh()` immediately (so data is available at startup,
+    not just after the first interval elapses), then every
+    `interval_seconds` for the life of the process. `refresh` itself
+    (see `SpaceWeatherService`) already catches its own provider
+    errors and keeps last-known-good data -- this outer try/except is
+    just a safety net against something unexpected."""
+    while True:
+        try:
+            await refresh()
+        except Exception:
+            logger.exception("%s refresh failed", label)
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -138,6 +157,7 @@ async def lifespan(app: FastAPI):
     scheduled_recording_service = ScheduledRecordingService(recording_service, receiver_service)
     hotplug_monitor = HotplugMonitor(receiver_service, event_bus)
     spectrum_scan_service = SpectrumScanService(receiver_service)
+    space_weather_service = SpaceWeatherService()
 
     app.state.settings = settings
     app.state.event_bus = event_bus
@@ -150,12 +170,25 @@ async def lifespan(app: FastAPI):
     app.state.scheduled_recording_service = scheduled_recording_service
     app.state.hotplug_monitor = hotplug_monitor
     app.state.spectrum_scan_service = spectrum_scan_service
+    app.state.space_weather_service = space_weather_service
 
     await _bootstrap_admin(settings)
     await hotplug_monitor.start(settings.hotplug.poll_interval_seconds)
 
     prune_task = asyncio.create_task(
         _prune_loop(settings.history.signal_detection_retention_days, settings.history.prune_interval_hours)
+    )
+    kp_task = asyncio.create_task(
+        _periodic_refresh_loop(
+            space_weather_service.refresh_kp, settings.space_weather.kp_refresh_seconds, "Kp index"
+        )
+    )
+    aurora_task = asyncio.create_task(
+        _periodic_refresh_loop(
+            space_weather_service.refresh_aurora,
+            settings.space_weather.aurora_refresh_seconds,
+            "Aurora forecast",
+        )
     )
 
     logger.info(
@@ -167,8 +200,14 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down Echo Base")
     prune_task.cancel()
+    kp_task.cancel()
+    aurora_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await prune_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await kp_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await aurora_task
     spectrum_scan_service.shutdown()
     hotplug_monitor.shutdown()
     scheduled_recording_service.shutdown()

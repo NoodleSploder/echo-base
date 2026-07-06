@@ -693,17 +693,56 @@ endpoint:
   "last known position per station" table.
 - `services/satellite_passes.py` -- wraps the `sgp4` library (not an
   external network call; the actual propagation library).
-- `services/n2yo.py` -- the one genuine external-provider adapter so
-  far: isolates n2yo.com's HTTP API (including its own quirks, like
-  returning HTTP 200 with a malformed body for some bad requests)
-  behind a clean `fetch_tle()` call that raises a real `N2yoError`
-  instead of letting a provider-specific failure mode leak upward.
+- `services/n2yo.py` -- isolates n2yo.com's HTTP API (including its
+  own quirks, like returning HTTP 200 with a malformed body for some
+  bad requests) behind a clean `fetch_tle()` call that raises a real
+  `N2yoError` instead of letting a provider-specific failure mode leak
+  upward.
+- `services/noaa_swpc.py` -- the second external-provider adapter,
+  proving the pattern generalizes to a provider with a very different
+  data shape (a real-time scalar time series for Kp, a 65k-point
+  global grid for aurora) without changing anything about `n2yo.py` or
+  the layers that don't consume space weather. Also demonstrates the
+  "normalize before it reaches the frontend" rule at its most literal:
+  NOAA's aurora grid is rendered to a single PNG server-side
+  (`render_aurora_png`) rather than shipping 65,160 raw points to the
+  browser to turn into a comparable number of Leaflet objects.
 
-Adding a new external provider (e.g. NOAA SWPC for space weather, or
-CelesTrak as an alternative TLE source alongside n2yo) means adding
-one new service module with the same shape -- fetch, validate,
-normalize, expose via REST -- not changing any existing provider's
-code or any frontend layer that doesn't consume it.
+Adding a new external provider (e.g. CelesTrak as an alternative bulk
+TLE source alongside n2yo, or a second space-weather source alongside
+NOAA) means adding one new service module with the same shape --
+fetch, validate, normalize, expose via REST -- not changing any
+existing provider's code or any frontend layer that doesn't consume
+it.
+
+## Provider caching and graceful failure (the general pattern)
+
+Every provider adapter with a real "fetch from the internet
+periodically" shape follows the same structure, first established by
+`HotplugMonitor` and generalized by `SpaceWeatherService`:
+
+1. A stateful service class holds the last-successfully-fetched data
+   in memory (`SpaceWeatherService._kp_readings`/`_aurora_png`, etc.).
+2. A `refresh_*()` method fetches, and **only replaces the cached data
+   on success** -- a failure is logged and the previous data (however
+   old) stays in place. A REST endpoint reading from this cache never
+   itself talks to the external provider, so a slow/down provider
+   can't turn into a slow/down Echo Base endpoint.
+3. A background `asyncio` task (`_periodic_refresh_loop` in
+   `main.py`, wired into the app lifespan alongside `HotplugMonitor`/
+   the signal-detection pruning task) calls `refresh_*()` once
+   immediately at startup (so data exists before the first interval
+   elapses) and then on a configurable interval (`SpaceWeatherSettings`
+   in `core/config.py` -- same shape as `HotplugSettings`/
+   `HistorySettings`).
+4. The REST endpoint 404s only in the narrow window before the very
+   first refresh completes; after that, it always returns *something*,
+   even if every subsequent refresh has failed.
+
+This is the template for any future "fetch periodically from an
+external source" provider (space weather's remaining datasets, a
+future weather-radar/NEXRAD layer, etc.) -- not something to redesign
+per provider.
 
 ## Orbit calculations happen in the browser, not the backend
 
@@ -776,19 +815,19 @@ rather than erroring the whole endpoint out.
 
 ## What's built vs. what the framework merely supports
 
-Two real layers exist today: **APRS Stations** (backed by data this
-project already decodes and persists) and **Satellite Ground Track**
+Three real layers exist today: **APRS Stations** (backed by data this
+project already decodes and persists), **Satellite Ground Track**
 (backed by TLE data this project already fetches/predicts passes
-from). Every other layer described in `ROADMAP.md`'s Geospatial
-Intelligence phase -- AIS ships, ADS-B aircraft, receiver sites, RF
-coverage/heat maps, space weather, aurora, storm polygons -- is a real
-gap in *data*, not in the layer framework: AIS/ADS-B position decoding
-was deliberately deferred when those decoders were built (see the
-diary), receivers have no stored site location yet, and no space-
-weather/aurora provider adapter has been written. The framework itself
+from), and **Aurora Forecast** (backed by NOAA SWPC, rendered
+server-side to a PNG). Every other layer described in `ROADMAP.md`'s
+Geospatial Intelligence phase -- AIS ships, ADS-B aircraft, receiver
+sites, RF coverage/heat maps, storm polygons -- is a real gap in
+*data*, not in the layer framework: AIS/ADS-B position decoding was
+deliberately deferred when those decoders were built (see the diary),
+and receivers have no stored site location yet. The framework itself
 places no constraint on adding any of them; each is exactly the same
-shape of work as APRS Stations was (a backend data source + a
-`MapLayer` subclass + one import line).
+shape of work as APRS Stations/Aurora Forecast were (a backend data
+source + a `MapLayer` subclass + one import line).
 
 ## Future extensibility
 

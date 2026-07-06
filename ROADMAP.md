@@ -683,13 +683,34 @@ Remaining
 
 ## Space Weather
 
-Remaining (nothing built yet)
+Completed
 
-- NOAA SWPC provider adapter (Kp index, solar wind, X-ray/proton flux,
-  geomagnetic storms, CME alerts, radio blackouts, HF fadeouts)
-- Aurora oval / probability / forecast overlays
+- NOAA SWPC provider adapter (`services/noaa_swpc.py`) -- free, no API
+  key at all (unlike n2yo.com). Background-refreshed (configurable,
+  default every 5 minutes per `SpaceWeatherSettings`), graceful
+  failure (a refresh error keeps the last-known-good data rather than
+  clearing it).
+- Kp (planetary K-index): `GET /api/space-weather/kp-index`, a small
+  sidebar readout on `/map` color-coded by storm severity (>=5 =
+  geomagnetic storm).
+- Aurora oval/forecast overlay: NOAA's OVATION model publishes a full
+  1deg x 1deg global grid (360 x 181 = 65,160 points) -- too many to
+  ship to the browser as individual markers, so it's rendered
+  server-side into a single transparent PNG
+  (`GET /api/space-weather/aurora.png`) and displayed with one
+  `L.imageOverlay`, the same "normalize behind the backend, don't make
+  the frontend deal with a provider's raw shape" reasoning as every
+  other provider adapter.
+
+Remaining
+
+- Solar wind, X-ray/proton flux, CME alerts, radio blackouts, HF
+  fadeouts -- same provider (NOAA SWPC publishes all of these too),
+  not yet wired up. Each is the same shape of work as Kp/aurora were.
 - Designed to allow additional sources to supplement NOAA later
-  (provider-abstraction shape, not a NOAA-specific integration)
+  (provider-abstraction shape, not a NOAA-specific integration) --
+  no second source implemented yet since none was needed for what's
+  built so far.
 
 ## Weather Layers
 

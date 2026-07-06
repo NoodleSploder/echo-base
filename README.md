@@ -196,13 +196,15 @@ Built today:
 - APRS stations (real decoded positions)
 - Satellite ground track + current position (client-side SGP4 via
   `satellite.js`, fed by a TLE from n2yo.com or pasted manually)
+- Aurora forecast (NOAA SWPC, free/keyless) + a Kp-index readout,
+  rendered server-side to keep a 65,160-point global grid off the
+  browser's plate
 
 Layers the framework supports but don't have real position data behind
 them yet (see `ROADMAP.md`'s Phase 17 for specifics):
 
 - Aircraft (ADS-B)
 - Marine traffic (AIS)
-- Weather / space weather
 - Receiver locations
 - Propagation / RF coverage
 - Signal reports (heat maps)

@@ -96,6 +96,16 @@ class SatelliteSettings(BaseModel):
     n2yo_api_key: str | None = None
 
 
+class SpaceWeatherSettings(BaseModel):
+    # NOAA SWPC is free/keyless, so both of these are just refresh
+    # cadence -- see services/noaa_swpc.py. "Every few minutes" per the
+    # original brief; NOAA doesn't publish either dataset much faster
+    # than this anyway (Kp is 3-hourly upstream; aurora forecast is a
+    # ~1x/minute nowcast product).
+    kp_refresh_seconds: float = 300.0
+    aurora_refresh_seconds: float = 300.0
+
+
 class HistorySettings(BaseModel):
     # `signal_detections` grows one row per detection for as long as
     # signal detection runs on any receiver -- unlike `aprs_stations`
@@ -144,6 +154,7 @@ class Settings(BaseSettings):
     history: HistorySettings = Field(default_factory=HistorySettings)
     hotplug: HotplugSettings = Field(default_factory=HotplugSettings)
     satellites: SatelliteSettings = Field(default_factory=SatelliteSettings)
+    space_weather: SpaceWeatherSettings = Field(default_factory=SpaceWeatherSettings)
 
     @classmethod
     def settings_customise_sources(

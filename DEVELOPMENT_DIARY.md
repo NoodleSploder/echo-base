@@ -4651,3 +4651,90 @@ anyway) without fighting the horizontal wrap.
   particular page benefits from real visual verification versus every
   other backend-heavy feature this session where API-level checks
   were sufficient.
+
+## Added: NOAA Space Weather (Kp index + Aurora forecast)
+
+Second real external-provider adapter, proving the pattern established
+by `services/n2yo.py` generalizes to a very different provider shape
+without touching n2yo's code or any layer that doesn't consume space
+weather. Also a genuinely free provider (no API key/registration at
+all, unlike n2yo) -- checked the real endpoints with `curl` before
+writing any code, same as every other provider integration this
+session.
+
+**A real scale problem, caught before writing the layer, not after**:
+NOAA's OVATION aurora forecast is a full 1deg x 1deg global grid --
+360 longitudes x 181 latitudes = 65,160 points, ~900KB of raw JSON.
+Shipping that to the browser and turning it into 65,160 individual
+Leaflet markers/rectangles would be a real performance problem (even
+filtered to non-zero probability, it's still 10-20k points depending
+on activity level -- checked this by actually pulling a live response
+and counting, not guessing). Instead, `render_aurora_png` (a pure
+function, no network -- fully unit-testable against a synthetic grid)
+rasterizes the grid server-side into a single transparent RGBA PNG,
+served via `GET /api/space-weather/aurora.png` and displayed with one
+`L.imageOverlay`. Coordinate remapping needed care: NOAA's grid is
+longitude-major, lon 0..359 (Greenwich-first), lat -90..90 ascending;
+the PNG needs column 0 = lon -180 (to match a `[[-90,-180],[90,180]]`
+`L.imageOverlay` bounds) and row 0 = lat +90 (image-row-0-is-top
+convention) -- verified with a unit test asserting a synthetic point
+at (lon=0, lat=90) lands at exactly pixel (180, 0) of a 360x181 image,
+not just "the build passed."
+
+**Provider caching pattern generalized, not reinvented per-provider**:
+`SpaceWeatherService` holds last-known-good Kp/aurora data in memory
+and only replaces it on a successful refresh (a failure logs and keeps
+serving the old data -- "graceful failure" per the original brief).
+Two background `asyncio` loops (`_periodic_refresh_loop` in
+`main.py`, refreshing Kp/aurora independently on their own configurable
+intervals -- `SpaceWeatherSettings.kp_refresh_seconds`/
+`aurora_refresh_seconds`, default 300s each) call an immediate refresh
+at startup (so data exists before the first interval elapses, not
+after) then repeat, wired into the app lifespan alongside
+`HotplugMonitor` and the signal-detection pruning task -- the same
+shape, not a new one. This is now documented in `ARCHITECTURE.md` as
+the general template for any future periodic-external-fetch provider.
+
+**Files added**: `backend/app/services/noaa_swpc.py`,
+`backend/app/api/routes/space_weather.py`,
+`frontend/src/geo/layers/AuroraLayer.ts`,
+`frontend/src/api/spaceWeather.ts`. New dependency: `Pillow` (PNG
+rendering -- `numpy` was already a dependency and does the actual grid
+math).
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 166/166 passing (7 new:
+  Kp/aurora parsing against real-shaped mocked responses (same
+  `httpx.MockTransport` approach as `test_n2yo.py`), empty-response/
+  missing-coordinates error handling, the pixel-placement assertion
+  above, an all-zero-grid-is-fully-transparent check, and
+  `SpaceWeatherService` keeping last-good Kp data across a simulated
+  500 from NOAA).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real, live, full pipeline**: restarted the backend and confirmed
+  against the actual running server (not mocks) --
+  `GET /api/space-weather/kp-index` returned a real current Kp
+  reading (2.33) fetched live from NOAA; `GET /api/space-weather/aurora.png`
+  returned a real 4.7KB PNG (vs. ~900KB raw JSON -- the server-side
+  rendering approach paying off exactly as intended). Decoded that
+  live PNG back with PIL/numpy and confirmed 19,649 non-transparent
+  pixels spanning rows 3-180 of 181 (both poles, as a real aurora oval
+  should) -- within ~0.03% of the 19,655 non-zero points counted
+  directly from NOAA's raw feed a few minutes earlier (the tiny
+  difference is real data changing between the two fetches, not
+  drift/error).
+
+## Next Steps
+
+1. Remaining NOAA SWPC datasets (solar wind, X-ray/proton flux, CME
+   alerts, radio blackouts, HF fadeouts) -- same provider, same
+   adapter shape, not yet wired up.
+2. Receiver site locations -- unlocks a real "Receiver Sites" layer.
+3. AIS/ADS-B position decoding -- unlocks real ship/aircraft layers.
+4. Same environment blocks as ever (no browser for visual
+   verification of the new Aurora layer/Kp readout specifically --
+   the API-level pipeline is fully verified, but rendering on the map
+   itself hasn't been screenshotted the way APRS/Satellite Track
+   layers already were).

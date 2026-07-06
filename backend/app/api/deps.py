@@ -13,6 +13,7 @@ from app.core.security import TokenError, decode_session_token
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
 from app.plugins.manager import PluginManager
+from app.services.noaa_swpc import SpaceWeatherService
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.scheduled_recording import ScheduledRecordingService
@@ -55,6 +56,10 @@ def get_scheduled_recording_service(request: Request) -> ScheduledRecordingServi
 
 def get_spectrum_scan_service(request: Request) -> SpectrumScanService:
     return request.app.state.spectrum_scan_service
+
+
+def get_space_weather_service(request: Request) -> SpaceWeatherService:
+    return request.app.state.space_weather_service
 
 
 

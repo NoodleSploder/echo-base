@@ -1,6 +1,7 @@
 import L from "leaflet";
 import { useEffect, useRef, useState } from "react";
 import { fetchTleByNoradId } from "../api/satellites";
+import { getKpIndex } from "../api/spaceWeather";
 import { createRegisteredLayers } from "../geo/LayerRegistry";
 import "../geo/layers"; // side-effect import: every layer module registers itself
 import { SatelliteTrackLayer } from "../geo/layers/SatelliteTrackLayer";
@@ -44,6 +45,27 @@ export function GeospatialPage() {
   const [satelliteBusy, setSatelliteBusy] = useState(false);
   const [satelliteError, setSatelliteError] = useState<string | null>(null);
   const [trackedSatellite, setTrackedSatellite] = useState<string | null>(null);
+
+  const [kp, setKp] = useState<{ value: number; timeTag: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function pollKp() {
+      try {
+        const result = await getKpIndex();
+        const latest = result.readings.at(-1);
+        if (!cancelled && latest) setKp({ value: latest.Kp, timeTag: latest.time_tag });
+      } catch {
+        // Not available yet (first backend refresh hasn't completed), or transient failure.
+      }
+    }
+    void pollKp();
+    const interval = setInterval(pollKp, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -224,6 +246,32 @@ export function GeospatialPage() {
             <p className="mt-1 text-[11px] text-emerald-400">Tracking: {trackedSatellite}</p>
           )}
           {satelliteError && <p className="mt-1 text-[11px] text-red-400">{satelliteError}</p>}
+        </div>
+
+        <div className="border-t border-base-700 pt-3">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Space Weather
+          </h2>
+          {kp ? (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400">Kp Index</span>
+              <span
+                className={`rounded px-1.5 py-0.5 font-mono font-semibold ${
+                  kp.value >= 5
+                    ? "bg-red-500/20 text-red-400"
+                    : kp.value >= 4
+                      ? "bg-amber-500/20 text-amber-400"
+                      : "bg-emerald-500/20 text-emerald-400"
+                }`}
+                title={`As of ${new Date(kp.timeTag).toLocaleString()} -- NOAA SWPC`}
+              >
+                {kp.value.toFixed(1)}
+              </span>
+              {kp.value >= 5 && <span className="text-red-400">Geomagnetic storm</span>}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500">Loading...</p>
+          )}
         </div>
 
         <div className="border-t border-base-700 pt-3 text-[11px] text-slate-500">
