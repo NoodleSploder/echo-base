@@ -201,26 +201,34 @@ export function ReceiverCard({
     };
   }, [occupancyEnabled, receiver.id]);
 
-  const captureShouldBeActive =
-    listening || recording || aprsEnabled || sameEnabled || signalDetectionEnabled || occupancyEnabled;
-
+  // Always polls (not just while something's toggled on locally) so a
+  // decoder enabled from elsewhere -- e.g. applying a suggested
+  // receiver profile with a "decoder" tag, which enables it
+  // server-side directly via StreamService -- is reflected here too,
+  // instead of this component's local on/off state silently
+  // disagreeing with what the backend is actually doing.
   useEffect(() => {
-    if (!captureShouldBeActive) {
-      setCaptureStalled(false);
-      return;
-    }
     let cancelled = false;
     async function poll() {
       try {
         const health = await getCaptureHealth(receiver.id);
         if (cancelled) return;
+        if (!health.active) {
+          setCaptureStalled(false);
+          return;
+        }
         const stalled =
-          health.active &&
-          (health.alive === false ||
-            (typeof health.last_read_age_seconds === "number" && health.last_read_age_seconds > 3));
+          health.alive === false ||
+          (typeof health.last_read_age_seconds === "number" && health.last_read_age_seconds > 3);
         setCaptureStalled(stalled);
+        if (typeof health.aprs_enabled === "boolean") setAprsEnabled(health.aprs_enabled);
+        if (typeof health.same_enabled === "boolean") setSameEnabled(health.same_enabled);
+        if (typeof health.signal_detection_enabled === "boolean") {
+          setSignalDetectionEnabled(health.signal_detection_enabled);
+        }
+        if (typeof health.occupancy_enabled === "boolean") setOccupancyEnabled(health.occupancy_enabled);
       } catch {
-        // Transient poll failure; don't flip the badge on a single miss.
+        // Transient poll failure; don't flip anything on a single miss.
       }
     }
     void poll();
@@ -229,7 +237,7 @@ export function ReceiverCard({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [captureShouldBeActive, receiver.id]);
+  }, [receiver.id]);
 
   async function handleToggleRecording() {
     setRecordingBusy(true);

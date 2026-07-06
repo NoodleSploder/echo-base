@@ -123,5 +123,16 @@ async def apply_profile(
     await service.tune(receiver_id, profile.frequency_hz)
     if profile.gain is not None:
         await service.set_gain(receiver_id, profile.gain)
+    # Auto-enables the profile's suggested decoder (see
+    # suggested_profiles.py) so "Add + Apply" is a genuine one-click
+    # path to a decoding receiver, not just a retuned one. Only ever
+    # turns a decoder *on* -- switching profiles never turns a
+    # currently-running decoder off, since that's the same "don't
+    # surprise-stop something the user started on purpose" reasoning
+    # as everywhere else decoders are controlled explicitly.
+    if profile.decoder == "aprs":
+        await stream_service.enable_aprs(receiver_id)
+    elif profile.decoder == "same":
+        await stream_service.enable_same(receiver_id)
     status = await service.status(receiver_id)
     return _status_response(status, receiver_id, stream_service)

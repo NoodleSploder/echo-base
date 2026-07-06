@@ -148,6 +148,10 @@ class _ReceiverCapture:
             "spectrum_subscribers": len(self._spectrum_subscribers),
             "audio_subscribers": sum(len(s) for s in self._audio_subscribers.values()),
             "iq_subscribers": len(self._iq_subscribers),
+            "aprs_enabled": self._aprs_enabled,
+            "same_enabled": self._same_enabled,
+            "signal_detection_enabled": self._signal_detection_enabled,
+            "occupancy_enabled": self._occupancy_enabled,
         }
 
     def is_idle(self) -> bool:

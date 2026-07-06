@@ -63,6 +63,10 @@ export interface CaptureHealth {
   spectrum_subscribers?: number;
   audio_subscribers?: number;
   iq_subscribers?: number;
+  aprs_enabled?: boolean;
+  same_enabled?: boolean;
+  signal_detection_enabled?: boolean;
+  occupancy_enabled?: boolean;
 }
 
 export const getCaptureHealth = (id: string) =>

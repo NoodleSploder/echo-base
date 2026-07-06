@@ -3488,3 +3488,46 @@ tunable range so it's a genuinely usable preset, not a placeholder.
    APRS/SAME were.
 2. Same Radio-Manager/browser-verification environment blocks as ever
    (`ROADMAP.md`).
+
+## Added: profile-apply auto-enables its decoder, capture-health syncs UI state
+
+A follow-on to the suggested-profiles entry above: the "decoder" field
+on a profile (already there for "APRS"/"SAME") was carried through to
+the API but never actually used by `apply_profile` -- applying the
+"NOAA Weather Radio" preset retuned the receiver but didn't start SAME
+decoding, so "one click" wasn't really one click yet.
+
+- `apply_profile` now calls `stream_service.enable_aprs`/`enable_same`
+  when `profile.decoder` is `"aprs"`/`"same"`. Only ever turns a
+  decoder *on* -- switching profiles never stops one a user already
+  started, matching how every other decoder toggle in this app works
+  (explicit stop only).
+- This exposed a real gap: `ReceiverCard`'s aprsEnabled/sameEnabled/
+  signalDetectionEnabled/occupancyEnabled are local component state,
+  never synced from the backend. Enabling a decoder via profile-apply
+  (or, previously, page reload while a decoder was running) would
+  leave the UI showing "Decode APRS" (off) while it was actually on.
+  Fixed by having `_ReceiverCapture.health()` report all four enabled
+  flags, and switching `ReceiverCard`'s capture-health poll (added in
+  the capture-health entry above) to always run (not just while
+  something's toggled on locally) and sync those four booleans from
+  the server every 4s.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 95/95 passing.
+- Frontend: `npm run lint` clean (2 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: created a real profile from the APRS suggested
+  preset, confirmed `capture-health` reported `aprs_enabled: false`
+  before applying it, applied it to the actual RTL2838, and confirmed
+  `capture-health` reported `aprs_enabled: true` immediately after --
+  with no separate "start APRS" call made. Cleaned up (stopped
+  decoding, deleted the test profile) via the real API afterward.
+
+## Next Steps
+
+1. Extend the same "decoder" auto-enable pattern to signal detection/
+   occupancy once profiles have a natural way to carry a margin_db
+   (they don't yet -- out of scope for this slice).
+2. Same environment blocks as ever (`ROADMAP.md`).
