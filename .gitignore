@@ -1,0 +1,41 @@
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node / Frontend ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- Runtime data ---
+data/*.db
+data/*.db-journal
+data/**
+!data/.gitkeep
+logs/*.log
+logs/**
+!logs/.gitkeep
+recordings/**
+!recordings/.gitkeep
+
+# --- Local configuration overrides ---
+config/config.yaml
+config/*.local.yaml
+.env
+.env.*
+!.env.example
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- Alembic ---
+backend/alembic/versions/*.pyc

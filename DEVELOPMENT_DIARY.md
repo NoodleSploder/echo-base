@@ -294,3 +294,92 @@ Every subsystem should be designed with future distributed deployments, plugin e
 The project's guiding principle remains:
 
 > **Echo Base is not another SDR application—it is a Radio Operations Platform.**
+
+---
+
+# 2026-07-05 — Platform Foundation and First Working Walking Skeleton
+
+## Summary
+
+Built Echo Base from an empty repository (documentation only) up
+through a working vertical slice: a modular FastAPI backend, a plugin
+framework, a real Receiver Manager backed by an RTL-SDR plugin, and a
+React/TypeScript/Tailwind dashboard that logs in, shows system health,
+streams live events over WebSocket, and controls receivers end to end.
+This corresponds to completing Phase 1 (Platform Foundation) and a
+meaningful slice of Phase 2 (Receiver Management) from ROADMAP.md.
+
+## Motivation
+
+HANDOFF_PROMPT.md's "Current Development Strategy" prescribes building
+in order: scaffolding, backend framework, frontend framework,
+configuration, logging, authentication, plugin framework, Receiver
+Manager, dashboard. Rather than stop at a bare scaffold, this session
+carried that sequence through to a working, testable, demoable slice —
+a "walking skeleton" that proves the whole architecture (REST +
+WebSocket + event bus + plugin system) actually fits together, rather
+than leaving each piece unverified in isolation.
+
+## Features Added
+
+Backend (`backend/`):
+
+- Configuration system: layered YAML + `ECHO_BASE_*` env vars + defaults, via `pydantic-settings` with a custom YAML source.
+- Structured logging: console + rotating file handler, optional JSON formatter, plugin-scoped loggers.
+- Database: SQLAlchemy 2.0 async + `aiosqlite`, `User` model with role enum, Alembic scaffolding with an initial migration.
+- Authentication: bcrypt password hashing, JWT session cookie (also accepted as `Bearer`), role-based dependency guards (administrator/operator/observer/guest), first-run admin bootstrap with a randomly generated password.
+- Event bus: asyncio pub/sub with a bounded history buffer, thread-safe `emit()` for plugin code running off the event loop.
+- WebSocket infrastructure: `ConnectionManager` fanning event-bus traffic out to `/ws/events`, with cookie/Bearer auth on connect.
+- Plugin framework: manifest schema (`manifest.yaml`), `PluginManager` (discovery, dynamic import, enable/disable/reload lifecycle), base interfaces for every plugin category (`Plugin`, `ReceiverPlugin`, `RadioPlugin`, `DecoderPlugin`, `DashboardPlugin`, `AutomationPlugin`).
+- Receiver Manager: `ReceiverService` aggregating receiver plugins behind one API, dispatching blocking plugin calls via `asyncio.to_thread`.
+- REST API: system (info/health/metrics), auth, users/roles, config (get/update/reload), receivers, plugins, and event history -- all using the standard `{success, data}` / `{success: false, error}` envelope from `docs/REST_API.md`, enforced via centralized FastAPI exception handlers.
+- `rtl_sdr` plugin (`plugins/rtl_sdr/`): discovers RTL-SDR hardware via the `rtl_test` CLI tool and models device lifecycle/tuning state (no IQ streaming yet).
+
+Frontend (`frontend/`):
+
+- Vite + React + TypeScript + Tailwind CSS, dark "command center" theme.
+- Auth context + protected routes; login page.
+- Dashboard shell: sidebar, topbar (live-connection indicator, user/logout), system health widget, live activity feed.
+- Receiver Manager UI: list/discover receivers, start/stop, tune, gain, all wired to the real REST API.
+- Shared WebSocket event-stream context (one socket for the whole authenticated app, not one per component).
+
+## Architecture Decisions
+
+- **`ReceiverPlugin` lifecycle methods take an explicit `receiver_id`**, refining docs/PLUGIN_API.md's single-device sketch so one plugin instance (e.g. `rtl_sdr`) can manage multiple physical devices, matching README's "Multiple RTL-SDR receivers" goal.
+- **Renamed the per-device status method to `device_status`**, keeping the inherited `Plugin.status()` as a no-argument, plugin-level health probe used generically by `GET /api/plugins`. Overriding `status()` with an incompatible signature was caught by a test and is exactly the kind of accidental breakage this split prevents.
+- **Standard API envelope enforced centrally** via FastAPI exception handlers (`EchoBaseError`, `HTTPException`, `RequestValidationError`, and a catch-all), so every route -- present and future -- gets consistent `{success, data}` / `{success: false, error: {code, message}}` responses without each handler re-implementing it.
+- **Schema creation via `Base.metadata.create_all` on startup, with Alembic scaffolded but not yet the enforced path.** Alembic holds a real, hand-written initial migration and a working async `env.py`, but the running app currently just creates missing tables for a zero-config first run. This is an explicit, temporary tradeoff for a single-table schema; Alembic becomes load-bearing once migrations need to be reviewable.
+- **Login cookie's `secure` flag gated on `environment == "production"`, not `!= "development"`.** A `testing` environment run over plain HTTP (as in the test suite) needs the cookie sent; only real production behind TLS should require it.
+- **Frontend talks to the same public REST/WebSocket API a third-party client would use** (via a thin `fetch` wrapper unwrapping the envelope), per ARCHITECTURE.md's "no private backend interfaces for the frontend" rule.
+
+## Files Created / Modified
+
+- `backend/` -- entire FastAPI application (see `backend/app/` subpackages: `core`, `db`, `plugins`, `services`, `websocket`, `api`, `schemas`), plus `alembic/`, `tests/`, `requirements*.txt`, `pyproject.toml`.
+- `frontend/` -- entire Vite/React/TypeScript application under `src/`.
+- `plugins/rtl_sdr/` -- reference receiver plugin (`manifest.yaml`, `plugin.py`, `requirements.txt`).
+- `config/config.example.yaml` -- documented configuration template.
+- `.gitignore` -- Python/Node/runtime-data ignores.
+- `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `docs/PLUGIN_API.md`, `docs/REST_API.md`, `docs/INSTALL.md` -- updated to describe what's actually implemented versus still planned.
+
+## Verification
+
+- `backend`: 12 pytest cases pass (system health/auth-required, login/logout/session, receiver discovery/lifecycle/404, plugin list/enable/disable/404), using an in-process ASGI client and a throwaway mock receiver plugin so hardware-independent behavior is covered without needing real SDR hardware.
+- Ran the real server with `uvicorn` (not just the test client) with the actual `rtl_sdr` plugin loaded: confirmed health, login, `/api/auth/me`, `/api/receivers` (correctly empty -- no SDR hardware attached to this machine), `/api/plugins`, `/api/system`, and WebSocket auth (unauthenticated connections rejected, authenticated ones succeed).
+- Frontend: `npm install` and `npm run build` (including `tsc -b` type-checking) succeed with zero errors, run inside a Node 22 container via rootless `podman` since Node/npm are not installed on the host.
+- Ran the Vite dev server against the real backend through the documented `/api` proxy and exercised the browser-facing flow via curl (serve `index.html`, health, login, session-cookie reuse, authenticated `/api/receivers`) end to end.
+
+## Outstanding Work
+
+- No actual IQ sample streaming from receivers yet (lifecycle/tuning state only).
+- No setup wizard; first-run admin bootstrap is a stopgap.
+- `/api/system/logs` not implemented.
+- SoapySDR and other SDR hardware plugins not started.
+- Radio Manager, Recording, Messaging, Automation, Maps, AI: not started (Phases 3+).
+- No CI configuration yet.
+
+## Recommended Next Steps
+
+1. Decide on an IQ streaming transport (WebSocket binary frames vs. a dedicated media endpoint) before building real sample streaming -- this affects the Receiver Manager and dashboard waterfall work together.
+2. Add Receiver Profiles (frequency/gain/bandwidth/decoder presets) since README and ARCHITECTURE.md both call this out explicitly for Phase 2.
+3. Start Phase 3 (Radio Manager / Hamlib integration) once Receiver Manager profiles land, following the same plugin-framework pattern established here.
+4. Add CI (lint + `pytest` + frontend `tsc`/`build`) so regressions are caught automatically as the plugin ecosystem grows.

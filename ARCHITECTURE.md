@@ -127,6 +127,13 @@ Future:
 
 The application should support either without code changes.
 
+**Implementation note:** SQLAlchemy 2.0 async ORM (`aiosqlite` driver).
+Alembic (`backend/alembic/`) is wired up and holds the initial schema
+revision, but the running app currently calls `Base.metadata.create_all`
+on startup for a zero-configuration first run; Alembic becomes the
+enforced path once the schema needs real migrations rather than a
+single `users` table.
+
 ---
 
 # Core Components
@@ -407,26 +414,30 @@ Profiles define:
 
 Every hardware integration should expose a common interface.
 
-Example:
+**Implementation note:** the interface actually implemented in
+`backend/app/plugins/receiver.py` refines the sketch below so a single
+plugin instance can manage more than one physical device (e.g. several
+RTL-SDR dongles) -- lifecycle methods take an explicit `receiver_id`:
 
 ```python
-class ReceiverPlugin:
-
-    def discover(self):
-        ...
-
-    def start(self):
-        ...
-
-    def stop(self):
-        ...
-
-    def tune(self, frequency):
-        ...
-
-    def status(self):
-        ...
+class ReceiverPlugin(Plugin):
+    def discover(self) -> list[ReceiverDescriptor]: ...
+    def start(self, receiver_id: str) -> ReceiverStatus: ...
+    def stop(self, receiver_id: str) -> ReceiverStatus: ...
+    def tune(self, receiver_id: str, frequency_hz: int) -> ReceiverStatus: ...
+    def set_gain(self, receiver_id: str, gain: str | float) -> ReceiverStatus: ...
+    def set_bandwidth(self, receiver_id: str, bandwidth_hz: int) -> ReceiverStatus: ...
+    def set_sample_rate(self, receiver_id: str, sample_rate_hz: int) -> ReceiverStatus: ...
+    def device_status(self, receiver_id: str) -> ReceiverStatus: ...
 ```
+
+`device_status` (not `status`) is deliberate: the base `Plugin.status()`
+is a no-argument, plugin-level health probe used generically by
+`GET /api/plugins`, and a receiver's per-device status is a distinct
+concept with a different signature. See `docs/PLUGIN_API.md` for the
+full contract and the base `Plugin`/`RadioPlugin`/`DecoderPlugin`/
+`DashboardPlugin`/`AutomationPlugin` interfaces (the latter four are
+defined but not yet wired to a manager -- see ROADMAP.md).
 
 The same philosophy applies to:
 
@@ -517,6 +528,13 @@ Future:
 
 Database-backed configuration.
 
+**Implementation note:** `backend/app/core/config.py` layers these
+sources with the following precedence (highest first): explicit
+constructor kwargs (tests) > `ECHO_BASE_*` environment variables
+(nested via `__`, e.g. `ECHO_BASE_SERVER__PORT`) > `config/config.yaml`
+> built-in defaults. Nothing is required to boot; see
+`config/config.example.yaml`.
+
 ---
 
 # Logging
@@ -557,6 +575,16 @@ Examples:
 - Operator
 - Observer
 - Guest
+
+**Implementation note:** authentication is a signed JWT stored in an
+httponly session cookie (`echo_base_session`), also accepted as a
+`Bearer` token for non-browser clients. Passwords are hashed with
+bcrypt. A fresh install with no users auto-creates an `admin` account
+with a random password printed once to the console/log and a forced
+`must_change_password` flag -- there is no setup wizard yet (tracked in
+ROADMAP.md). Every response uses the standard envelope from
+`docs/REST_API.md` (`{success, data}` / `{success: false, error}`),
+enforced centrally via FastAPI exception handlers in `app/main.py`.
 
 ---
 

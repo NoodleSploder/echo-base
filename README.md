@@ -303,9 +303,23 @@ Development installation:
 ```bash
 git clone https://github.com/NoodleSploder/echo-base.git
 cd echo-base
+
+# Backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements-dev.txt
+cd backend && uvicorn app.main:app --reload
+
+# Frontend (separate shell)
+cd frontend
+npm install
+npm run dev
 ```
 
-Installation tooling will be provided as the project matures.
+See `docs/INSTALL.md` for full details, including configuration and the
+plugin directory layout.
+
+Installation tooling (packaged installer, systemd units, distro packages) will be provided as the project matures.
 
 Supported platforms:
 
@@ -319,9 +333,18 @@ Supported platforms:
 
 # Project Status
 
-Echo Base is currently in early development.
+Echo Base has its first working walking skeleton: a FastAPI backend
+(configuration, structured logging, SQLite via SQLAlchemy, session
+authentication with role-based access, an internal event bus,
+WebSocket live updates, and a plugin framework) paired with a React +
+TypeScript + Tailwind dashboard (login, system health, live activity
+feed, and a Receiver Manager view). The Receiver Manager is backed by
+a real `rtl_sdr` plugin that discovers RTL-SDR hardware via the
+`rtl-sdr` command-line tools.
 
-The initial milestone focuses on building the platform architecture, modular backend, web interface, receiver management, and plugin framework.
+Actual IQ sample streaming, Radio Manager, Recording, Messaging,
+Automation, Maps, and AI are not implemented yet -- see `ROADMAP.md`
+for what's next.
 
 ---
 

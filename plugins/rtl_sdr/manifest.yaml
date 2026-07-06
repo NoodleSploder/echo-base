@@ -1,0 +1,9 @@
+name: RTL-SDR
+id: rtl_sdr
+version: 0.1.0
+author: Echo Base Project
+description: Discovers and controls RTL-SDR receivers via the rtl-sdr command-line tools.
+plugin_type: receiver
+api_version: 1
+entry_point: plugin.py
+min_echo_base_version: "0.1.0"

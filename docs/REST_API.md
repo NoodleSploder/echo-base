@@ -8,6 +8,13 @@ The REST API is considered the **public contract** between the backend, frontend
 
 Every feature exposed by the web interface should also be accessible through the REST API.
 
+**Implementation status:** System, Authentication, Users/Roles,
+Configuration, Receivers, Plugins, and the live Events stream (this
+page's respective sections) are implemented in `backend/app/api/routes/`.
+Radios, Digital Modes, Messaging, Recording, Maps, Spectrum, Automation,
+Alerts, Scheduler, and AI are documented below as the target design but
+not yet implemented -- see `ROADMAP.md` for sequencing.
+
 ---
 
 # Design Goals

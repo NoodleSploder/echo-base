@@ -40,21 +40,21 @@ Long-term goals include:
 - Licensing established
 - README
 - Architecture planning
+- Platform foundation: backend framework, configuration, logging, database, authentication, plugin framework (Phase 1)
+- Frontend framework: React/TypeScript/Tailwind dashboard shell with auth and live updates (Phase 1)
+- Receiver Manager core + a working `rtl_sdr` reference plugin (Phase 2, partial)
 
 ---
 
 ## In Progress
 
-- Project framework
-- Backend architecture
-- Frontend architecture
-- Core service model
+- Receiver profiles, calibration, and richer hardware support (Phase 2)
 
 ---
 
 ## Remaining
 
-Everything else.
+Everything from Phase 3 onward (Radio Management through Documentation).
 
 ---
 
@@ -64,20 +64,22 @@ Everything else.
 
 Completed
 
-- None
+- FastAPI project scaffold (`backend/app`)
+- API framework (routers, dependency injection, standard response envelope, centralized exception handling)
+- Configuration system (YAML + environment overrides, see `config/config.example.yaml`)
+- Logging framework (structured console + rotating file, JSON-capable)
+- SQLite integration (SQLAlchemy 2.0 async + Alembic scaffolding)
+- Authentication (session-cookie/Bearer JWT, bcrypt password hashing, first-run admin bootstrap)
+- User management (CRUD + role-based access: administrator/operator/observer/guest)
+- Health monitoring (`/api/system/health`, `/api/system/metrics`)
+- REST API foundation (system, auth, users, config, receivers, plugins, events)
+- WebSocket infrastructure (internal event bus + `/ws/events` live stream)
 
 Remaining
 
-- FastAPI project
-- API framework
-- Configuration system
-- Logging framework
-- SQLite integration
-- Authentication
-- User management
-- Health monitoring
-- REST API foundation
-- WebSocket infrastructure
+- `/api/system/logs` (log viewer endpoint)
+- OAuth2 / OpenID Connect
+- API tokens distinct from session JWTs
 
 ---
 
@@ -85,29 +87,34 @@ Remaining
 
 Completed
 
-- UI concepts
+- React + TypeScript + Vite application
+- Tailwind integration with a dark "command center" theme
+- Dashboard framework (routing, protected routes, layout shell)
+- Navigation (sidebar with active-section highlighting; future sections marked "coming soon")
+- Theme (dark, consistent with the command-center direction from the dev diary)
+- WebSocket client (shared event-stream context, auto-reconnect)
+- Login flow and system health / live activity widgets
 
 Remaining
 
-- React application
-- Tailwind integration
-- Dashboard framework
-- Navigation
-- Theme
-- WebSocket client
-- Notification system
+- Notification system (toasts/alerts distinct from the raw event feed)
+- Receiver profile management UI
+- Accessibility and responsive-layout pass
 
 ---
 
 ## Configuration
 
+Completed
+
+- YAML configuration (`config/config.yaml`, optional)
+- Environment overrides (`ECHO_BASE_*`)
+- Secrets (`security.secret_key`, redacted from `GET /api/config`)
+
 Remaining
 
-- YAML configuration
-- Environment overrides
-- Secrets
-- Hardware discovery
-- Initial setup wizard
+- Hardware discovery wizard
+- Initial setup wizard (first-run currently auto-creates an admin account instead)
 
 ---
 
@@ -115,26 +122,31 @@ Remaining
 
 ## SDR Discovery
 
+Completed
+
+- RTL-SDR detection (via `rtl_test`, in the `rtl_sdr` plugin)
+
 Remaining
 
-- RTL-SDR detection
 - SoapySDR detection
-- Receiver inventory
-- USB monitoring
+- Airspy / SDRplay / HackRF / PlutoSDR / LimeSDR plugins
+- Receiver inventory persistence (currently discovered live, not stored)
+- USB hot-plug monitoring
 
 ---
 
 ## Receiver Control
 
+Completed
+
+- Frequency, gain, bandwidth, sample rate (lifecycle state, via REST)
+
 Remaining
 
-- Frequency
-- Gain
-- Bandwidth
-- Sample rate
+- Actual IQ sample streaming (current `start`/`stop` model device lifecycle only, no sample pipeline yet)
 - Profiles
 - Calibration
-- Health monitoring
+- Health monitoring per-device (beyond basic state)
 
 ---
 
@@ -358,11 +370,25 @@ Future
 
 # Phase 12 — Plugin Framework
 
+Completed
+
+- Core framework: manifest schema, discovery/loading, enable/disable/reload lifecycle, per-plugin config and logger injection (`backend/app/plugins/`)
+- Base interfaces for every plugin category (`Plugin`, `ReceiverPlugin`, `RadioPlugin`, `DecoderPlugin`, `DashboardPlugin`, `AutomationPlugin`)
+
 Remaining
+
+- Plugin registry / marketplace, install/uninstall via API
+- Hot reload without dropping in-flight operations
+- Sandboxed execution
 
 ## Hardware Plugins
 
-- RTL-SDR
+Completed
+
+- RTL-SDR (`plugins/rtl_sdr/`)
+
+Remaining
+
 - Airspy
 - SDRplay
 - HackRF

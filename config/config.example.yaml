@@ -1,0 +1,43 @@
+# Echo Base configuration.
+#
+# Copy this file to config.yaml and edit as needed, or override any
+# value with an environment variable, e.g.:
+#   ECHO_BASE_SERVER__PORT=9000
+#   ECHO_BASE_SECURITY__SECRET_KEY=change-me
+#
+# Nothing here is required -- Echo Base runs with sensible defaults out
+# of the box. Precedence: env vars > this file > built-in defaults.
+
+environment: development
+
+server:
+  host: 0.0.0.0
+  port: 9088
+  cors_origins:
+    - http://localhost:5173
+    - http://127.0.0.1:5173
+
+database:
+  url: "sqlite+aiosqlite:///../data/echo-base.db"
+  echo: false
+
+logging:
+  level: INFO
+  json_format: false
+  directory: ../logs
+  filename: echo-base.log
+
+security:
+  # Generate a real value for anything beyond local development, e.g.:
+  #   python -c "import secrets; print(secrets.token_urlsafe(48))"
+  secret_key: insecure-development-secret-key-change-me
+  algorithm: HS256
+  access_token_expire_minutes: 720
+  cookie_name: echo_base_session
+
+plugins:
+  directory: ../plugins
+  enabled: {}
+  settings:
+    rtl_sdr:
+      discovery_timeout_seconds: 5

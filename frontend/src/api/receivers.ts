@@ -1,0 +1,13 @@
+import { api } from "../lib/apiClient";
+import type { ReceiverDescriptor, ReceiverStatus } from "../types";
+
+export const listReceivers = () => api.get<ReceiverDescriptor[]>("/api/receivers");
+export const discoverReceivers = () => api.post<ReceiverDescriptor[]>("/api/receivers/discover");
+export const getReceiver = (id: string) => api.get<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}`);
+
+export const startReceiver = (id: string) =>
+  api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/start`);
+export const stopReceiver = (id: string) =>
+  api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/stop`);
+export const tuneReceiver = (id: string, frequency: number) =>
+  api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/tune`, { frequency });

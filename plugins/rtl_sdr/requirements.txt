@@ -1,0 +1,4 @@
+# No additional Python dependencies: this plugin shells out to the
+# rtl-sdr command-line tools (rtl_test) rather than binding librtlsdr
+# directly. Install the `rtl-sdr` package for your distribution to
+# enable it.

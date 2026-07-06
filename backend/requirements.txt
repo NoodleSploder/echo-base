@@ -1,0 +1,18 @@
+# Echo Base backend runtime dependencies
+#
+# Keep this list minimal and justified. Every dependency here runs in
+# production, so prefer the standard library when practical.
+# Versions are pinned against what actually resolves with prebuilt
+# wheels on the target Python version; bump deliberately.
+
+fastapi==0.139.0
+uvicorn[standard]==0.50.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+SQLAlchemy==2.0.51
+aiosqlite==0.22.1
+alembic==1.18.5
+PyYAML==6.0.3
+PyJWT==2.13.0
+bcrypt==5.0.0
+python-multipart==0.0.32

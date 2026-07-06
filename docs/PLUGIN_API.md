@@ -224,38 +224,51 @@ class Plugin:
 
 Receiver plugins expose SDR hardware.
 
+**Implemented interface** (`backend/app/plugins/receiver.py`): a single
+plugin instance may manage more than one physical device of the same
+driver (e.g. several RTL-SDR dongles), so every lifecycle method takes
+an explicit `receiver_id` returned by `discover()`. The per-device
+status method is named `device_status`, not `status` -- `status()` is
+inherited from the base `Plugin` class as a no-argument, plugin-level
+health probe (used by `GET /api/plugins`), and giving it an incompatible
+signature would break that generic contract.
+
 ```python
 class ReceiverPlugin(Plugin):
 
-    def discover(self):
-        """Return discovered receivers."""
+    def discover(self) -> list[ReceiverDescriptor]:
+        """Return receivers currently visible to this plugin."""
 
-    def start(self):
-        """Start receiver."""
+    def start(self, receiver_id: str) -> ReceiverStatus: ...
 
-    def stop(self):
-        """Stop receiver."""
+    def stop(self, receiver_id: str) -> ReceiverStatus: ...
 
-    def tune(self, frequency):
+    def tune(self, receiver_id: str, frequency_hz: int) -> ReceiverStatus: ...
 
-        pass
+    def set_gain(self, receiver_id: str, gain: str | float) -> ReceiverStatus: ...
 
-    def set_gain(self, gain):
+    def set_bandwidth(self, receiver_id: str, bandwidth_hz: int) -> ReceiverStatus: ...
 
-        pass
+    def set_sample_rate(self, receiver_id: str, sample_rate_hz: int) -> ReceiverStatus: ...
 
-    def set_bandwidth(self, bandwidth):
-
-        pass
-
-    def set_sample_rate(self, rate):
-
-        pass
-
-    def status(self):
-
-        pass
+    def device_status(self, receiver_id: str) -> ReceiverStatus: ...
 ```
+
+`ReceiverDescriptor` (`id`, `name`, `driver`, `serial`, `capabilities`)
+and `ReceiverStatus` (`id`, `state`, `frequency_hz`, `sample_rate_hz`,
+`bandwidth_hz`, `gain`, `detail`) are plain dataclasses returned by
+these methods; the REST layer converts them to the schemas in
+`docs/REST_API.md`.
+
+The reference implementation is `plugins/rtl_sdr/`, which discovers
+hardware via the `rtl_test` command-line tool and models device
+lifecycle state. It does not yet stream IQ samples -- see ROADMAP.md.
+
+The `RadioPlugin`, `DecoderPlugin`, `DashboardPlugin`, and
+`AutomationPlugin` base classes below are implemented as interfaces
+(`backend/app/plugins/`) but have no manager wired up yet; they exist
+so plugins for those categories can already be authored against a
+stable contract.
 
 ---
 

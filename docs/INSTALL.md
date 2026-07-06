@@ -134,7 +134,11 @@ source .venv/bin/activate
 
 pip install -U pip
 
+# Runtime only:
 pip install -r backend/requirements.txt
+
+# Contributing / running tests (adds pytest, pytest-asyncio, httpx):
+pip install -r backend/requirements-dev.txt
 ```
 
 ---
@@ -215,25 +219,26 @@ tests/
 
 # Configuration
 
-Configuration files live in:
+Configuration lives in:
 
 ```
 config/
 ```
 
-Example:
+Echo Base runs with zero configuration files -- everything has a
+built-in default. To customize, copy the example and edit it:
 
+```bash
+cp config/config.example.yaml config/config.yaml
 ```
-config/
 
-    config.yaml
-
-    receivers.yaml
-
-    radios.yaml
-
-    users.yaml
-```
+Any value can also be overridden with an `ECHO_BASE_*` environment
+variable (nested via `__`), e.g. `ECHO_BASE_SERVER__PORT=9000`. Env
+vars take precedence over `config.yaml`, which takes precedence over
+built-in defaults. There is currently one file, not separate
+`receivers.yaml`/`radios.yaml`/`users.yaml` -- users live in the
+database and receivers are discovered live from plugins rather than
+configured statically.
 
 ---
 
@@ -309,26 +314,32 @@ Default URL:
 http://localhost:8088
 ```
 
-The initial setup wizard will:
+There is no setup wizard yet. On the very first startup, if no user
+accounts exist, Echo Base automatically creates an `admin` account with
+a randomly generated password, printed once to the console/log with a
+forced password change on first login. A future release will replace
+this with an interactive wizard that also:
 
-- Create administrator account
-- Configure storage
-- Discover SDR hardware
-- Configure plugins
-- Verify dependencies
+- Configures storage
+- Discovers SDR hardware
+- Configures plugins
+- Verifies dependencies
 
 ---
 
 # Hardware Detection
 
-Echo Base automatically detects:
+Currently implemented:
 
-- RTL-SDR
+- RTL-SDR, via the `rtl_sdr` plugin (requires the `rtl-sdr` package's
+  `rtl_test` tool on `PATH`)
+
+Planned:
+
 - SoapySDR devices
 - Hamlib-compatible radios
 - Audio interfaces
-
-Future releases will support automatic hot-plug detection.
+- Automatic hot-plug detection
 
 ---
 
