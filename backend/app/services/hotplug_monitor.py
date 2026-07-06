@@ -16,6 +16,8 @@ import asyncio
 import logging
 
 from app.core.events import Event, EventBus
+from app.plugins.receiver import ReceiverDescriptor
+from app.services.receiver_inventory import upsert_seen
 from app.services.receiver_service import ReceiverService
 
 logger = logging.getLogger("echo_base.hotplug")
@@ -34,9 +36,19 @@ class HotplugMonitor:
         try:
             descriptors = await self._receiver_service.discover()
             self._known_ids = {d.id for d in descriptors}
+            await self._record_seen(descriptors)
         except Exception:
             logger.exception("Initial hotplug discovery failed")
         self._task = asyncio.create_task(self._loop(interval_seconds))
+
+    async def _record_seen(self, descriptors: list[ReceiverDescriptor]) -> None:
+        # Best-effort: a DB hiccup shouldn't stop connect/disconnect
+        # detection, which matters more than the inventory log of it.
+        for descriptor in descriptors:
+            try:
+                await upsert_seen(descriptor)
+            except Exception:
+                logger.exception("Failed to record inventory for '%s'", descriptor.id)
 
     async def check_once(self) -> None:
         try:
@@ -45,6 +57,7 @@ class HotplugMonitor:
             logger.exception("Hotplug discovery poll failed")
             return
 
+        await self._record_seen(descriptors)
         current_ids = {d.id for d in descriptors}
         for receiver_id in current_ids - self._known_ids:
             logger.info("Receiver connected: %s", receiver_id)

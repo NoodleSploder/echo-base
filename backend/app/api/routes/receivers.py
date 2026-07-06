@@ -25,6 +25,7 @@ from app.schemas.receiver import (
     SignalDetectionRequest,
     TuneRequest,
 )
+from app.services.receiver_inventory import list_inventory
 from app.services.receiver_service import ReceiverService
 from app.services.signal_history import (
     DEFAULT_HISTORY_LIMIT,
@@ -66,6 +67,35 @@ async def discover_receivers(
 ) -> dict:
     receivers = await service.discover()
     return ok([ReceiverDescriptorSchema(**asdict(r)).model_dump() for r in receivers])
+
+
+@router.get("/inventory")
+async def get_receiver_inventory(
+    service: ReceiverService = Depends(get_receiver_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Every receiver ever seen (survives both unplugging and a backend
+    restart), each flagged with whether it's currently attached --
+    distinct from `GET /api/receivers`, which only ever shows what's
+    live right now. `attached` is computed from a fresh discovery at
+    request time, not from `HotplugMonitor`'s own (up-to-10s-stale)
+    last poll."""
+    currently_attached = {d.id for d in await service.list_receivers()}
+    records = await list_inventory()
+    return ok(
+        [
+            {
+                "receiver_id": r.receiver_id,
+                "name": r.name,
+                "driver": r.driver,
+                "serial": r.serial,
+                "first_seen_at": r.first_seen_at.isoformat(),
+                "last_seen_at": r.last_seen_at.isoformat(),
+                "attached": r.receiver_id in currently_attached,
+            }
+            for r in records
+        ]
+    )
 
 
 @router.get("/{receiver_id}")

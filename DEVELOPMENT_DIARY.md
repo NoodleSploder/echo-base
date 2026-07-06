@@ -3962,3 +3962,46 @@ directly, so it works for any receiver plugin, not just `rtl_sdr`.
    Discovery item) -- track "last seen" for receivers no longer
    currently attached, rather than only ever showing live discovery.
 2. Same environment blocks as ever.
+
+## Added: Receiver inventory persistence (Phase 2)
+
+Closes Phase 2's other SDR Discovery remaining item. `GET
+/api/receivers` only ever shows what's currently attached (it re-runs
+discovery live on every call) -- there was no way to answer "what
+receivers has this deployment ever had" once one's unplugged, or
+across a restart.
+
+- `receiver_inventory` table (migration 0008): one row per
+  receiver_id, `first_seen_at` set once, `last_seen_at` refreshed on
+  every sighting.
+- `services/receiver_inventory.py`: `upsert_seen`/`list_inventory`,
+  same plain-upsert shape as `aprs_stations.py`.
+- Wired into `HotplugMonitor` (both the initial silent seed and every
+  `check_once()` poll) rather than the `GET /api/receivers` handler --
+  keeps writes bounded to the hotplug poll interval instead of once
+  per page load/client, and best-effort (a DB hiccup logs and moves on
+  rather than breaking connect/disconnect detection, which matters
+  more).
+- `GET /api/receivers/inventory`: every receiver ever seen, each
+  flagged `attached` from a *fresh* discovery at request time (not
+  `HotplugMonitor`'s own up-to-10s-stale last poll). No dedicated
+  frontend view yet -- API-only for this slice, noted in `ROADMAP.md`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 117/117 passing (3 new:
+  upsert-then-update-in-place against the service directly, a REST
+  check against the real `HotplugMonitor`+mock-plugin path, auth
+  required).
+- **Real hardware**: restarted the live backend, queried
+  `GET /api/receivers/inventory` -- the actual RTL2838 was already
+  recorded (seeded by `HotplugMonitor.start()` at startup) with
+  `attached: true`, real name/driver/serial
+  ("Nooelec, NESDR SMArt v5" / "rtl_sdr" / "00000001").
+
+## Next Steps
+
+1. A frontend view for the inventory (currently API-only).
+2. Same environment blocks as ever -- most of Phase 2's concretely
+   scoped, hardware-testable-here items are now done; next slice will
+   need a fresh look at `ROADMAP.md` across phases.

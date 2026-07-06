@@ -152,12 +152,16 @@ Completed
 - USB hot-plug monitoring (`HotplugMonitor`: polls `ReceiverService.discover()`
   on a timer, emits `ReceiverConnected`/`ReceiverDisconnected` events -- surfaced
   as toasts via `EventToastBridge`)
+- Receiver inventory persistence (`receiver_inventory` table: every receiver
+  ever seen, survives unplugging and restarts, `GET /api/receivers/inventory`
+  flags each as currently `attached` or not -- no dedicated frontend widget yet,
+  API-only so far)
 
 Remaining
 
 - SoapySDR detection
 - Airspy / SDRplay / HackRF / PlutoSDR / LimeSDR plugins
-- Receiver inventory persistence (currently discovered live, not stored)
+- A frontend view for the receiver inventory (currently API-only)
 
 ---
 
