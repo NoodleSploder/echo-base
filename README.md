@@ -118,6 +118,15 @@ Integration with existing applications including:
 
 Echo Base orchestrates these applications rather than replacing them.
 
+Built today (a real in-house decoder, not orchestration): **SSTV**
+(Martin M1) -- tune to a real SSTV signal and watch a picture decode
+live, line by line, right in the Receiver card. Two-stage frequency
+recovery (FM discriminator, then a Hilbert-transform instantaneous-
+frequency estimate of the recovered audio's own SSTV tone) feeding a
+sync-tracking image decoder; verified against a synthetic Martin M1
+waveform, same "encode it, decode it, compare" pattern as this
+project's other decoders.
+
 ---
 
 ## Aviation

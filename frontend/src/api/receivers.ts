@@ -52,6 +52,27 @@ export const startAisDecoding = (id: string) =>
 export const stopAisDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/ais/stop`);
 
+export const startSstvDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/sstv/start`);
+export const stopSstvDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/sstv/stop`);
+
+export interface SstvSnapshot {
+  lines_decoded: number;
+  total_lines: number;
+  is_complete: boolean;
+}
+
+export const getSstvSnapshot = (id: string) =>
+  api.get<SstvSnapshot>(`/api/receivers/${encodeURIComponent(id)}/sstv`);
+
+// Not fetched through the shared `api` client -- handed straight to an
+// <img> tag as a src URL, same as the aurora PNG (see
+// api/spaceWeather.ts). The session cookie rides along automatically
+// since it's a same-origin GET.
+export const sstvImagePath = (id: string) =>
+  `/api/receivers/${encodeURIComponent(id)}/sstv/image.png`;
+
 export const startSignalDetection = (id: string, marginDb: number) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/signal-detection/start`, {
     margin_db: marginDb,
@@ -97,6 +118,7 @@ export interface CaptureHealth {
   same_enabled?: boolean;
   ads_b_enabled?: boolean;
   ais_enabled?: boolean;
+  sstv_enabled?: boolean;
   signal_detection_enabled?: boolean;
   occupancy_enabled?: boolean;
   triggered_recording_armed?: boolean;

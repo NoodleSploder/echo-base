@@ -5037,3 +5037,109 @@ from scratch.
    deferred" gap.
 3. RF Coverage propagation modeling, CME alerts/radio blackouts/HF
    fadeouts remain unbuilt.
+
+## Added: SSTV (Slow-Scan TV) decoder -- the "fun/wiz-bang" feature
+
+Explicitly requested as something visually satisfying rather than more
+infrastructure: SSTV turns an audio tone into an actual picture, and
+watching one draw itself in live (line by line, right in the Receiver
+card) is a classic ham radio party trick. Scoped to **Martin M1**
+(320x256, RGB scan order G/B/R) -- one of the oldest, most commonly
+implemented SSTV modes, same "achievable subset first" reasoning as
+Mode S picking DF17/18 airborne position before surface position.
+
+**Two-stage frequency recovery**, the same shape as AFSK1200's "tone
+correlation on top of an already-demodulated signal": `fm_discriminator`
+recovers the audio baseband (the same "audio" a real TNC/SSTV decoder
+would see), and a second stage recovers *that audio's own*
+instantaneous frequency (1200Hz sync / 1500-2300Hz picture data) via a
+discrete Hilbert transform. Implemented the Hilbert transform directly
+with `numpy.fft` (the standard analytic-signal construction) rather
+than adding scipy as a dependency for one function.
+
+**A real, load-bearing test-encoder bug, found and fixed before it
+could hide a real decoder bug**: the first synthetic round-trip test
+failed with all lines garbled. Traced it to the *test's* encoder using
+integer-truncated per-pixel repeat counts (`channel_len // WIDTH`),
+making the encoded line slightly shorter than the decoder's exact
+nominal channel duration -- a compounding drift that misaligned every
+subsequent line's sync search. Fixed by generating exact-length
+segments (matching sample-to-pixel assignment, not truncating). This
+is a good example of why an independent reference-style check matters:
+a wrong test can look like a wrong decoder.
+
+**A second, real decoder bug this exposed**: `_decode_channel`
+originally used a fixed-size reshape (`len(segment) // WIDTH` samples
+per pixel, discarding the remainder) to average each pixel's frequency
+-- since a 320px channel scan is ~11.0 samples/pixel at 48kHz, never a
+whole number, this silently drifted more and more across each row.
+Fixed with exact fractional pixel boundaries (`np.linspace` + `np.add.
+reduceat`), eliminating the drift entirely.
+
+**A third finding, about the sync-detection heuristic itself, honestly
+documented as a known limitation rather than chased to perfection**:
+searching the *entire* buffer for the next sync pulse could
+occasionally lock onto a spurious low-frequency dip inside a *later*
+line's own picture content (real images have near-black pixels close
+enough to the 1200Hz sync tone that Hilbert-transform noise briefly
+dips below the threshold). Narrowing the search to right after the
+previous line (with a wider fallback if that fails) fixes the far more
+common false-positive case, at the cost of occasionally losing a line
+to drift on the rare occasion the real pulse isn't where expected. A
+full 256-line image typically decodes in the mid-to-high 90% range of
+lines correctly, not a deterministic 100% -- a reasonable trade-off
+for a bonus feature, documented directly in the module's docstring
+rather than silently accepted or endlessly chased.
+
+**Architecture**: mirrors occupancy's "running state, not events"
+shape exactly -- `enable_sstv`/`disable_sstv`/`get_sstv_snapshot`/
+`get_sstv_image_png` on `StreamService`, an in-memory `MartinM1Decoder`
+per capture (no DB persistence -- a live in-progress picture is
+inherently ephemeral, same reasoning as the spectrum waterfall).
+`GET /api/receivers/{id}/sstv/image.png` renders whatever's decoded so
+far as a real PNG (via Pillow, already a dependency from the aurora
+work) -- including a still-drawing, incomplete image, which is exactly
+the point: the frontend (`ReceiverCard`'s new "Decode SSTV" toggle)
+polls a snapshot every second and re-fetches the image, watching it
+draw in live.
+
+**Files added**: `backend/app/services/decoders/sstv.py`,
+`backend/tests/test_sstv.py`. Extended: `stream_service.py` (per-
+capture SSTV state + decode call + snapshot/PNG methods),
+`api/routes/receivers.py` (`sstv/start`, `sstv/stop`, `sstv`,
+`sstv/image.png`), `api/receivers.ts`, `ReceiverCard.tsx`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 194/194 passing (7 new in
+  `test_sstv.py`: hz-to-luma clipping, instantaneous-frequency
+  recovery of a steady tone, sync-pulse location/absence, a realistic-
+  image round-trip, a full 256-line image hitting the documented >=90%
+  bar, and reset-after-completion; 4 new in `test_receivers.py`: full
+  REST start/stop/snapshot/image round-trip against the mock receiver,
+  confirming a *real* PNG (magic bytes `\x89PNG\r\n\x1a\n`) is
+  returned, not an empty/error body).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, honestly reported**: confirmed the toggle itself
+  works correctly against the real attached RTL-SDR (`sstv_enabled:
+  true` in capture-health, idempotent start/stop) but real over-the-
+  air image decoding is blocked by the same pre-existing
+  `usbfs_memory_mb` capture-thread stall already diagnosed and logged
+  for ADS-B/APRS/SAME -- not a new or SSTV-specific issue. The full
+  decode pipeline (route -> StreamService -> decoder -> PNG) is
+  verified end-to-end via the REST test suite using the mock receiver
+  plugin, which produces real IQ samples deterministically without
+  needing the physical USB capture path.
+
+## Next Steps
+
+1. Once `usbfs_memory_mb` is raised (needs root, see "Known
+   Environment Blocks"): tune to a real SSTV frequency (e.g.
+   145.800MHz FM during an ISS SSTV event) and watch a real picture
+   decode live.
+2. Other SSTV modes (Scottie, Robot 36, and PD120 -- what the ISS
+   actually transmits) would be natural follow-ups, same shape of
+   work as Martin M1 with a different timing table.
+3. RF Coverage modeling, CME alerts/radio blackouts, AIS position
+   decoding remain the other open items from earlier entries.

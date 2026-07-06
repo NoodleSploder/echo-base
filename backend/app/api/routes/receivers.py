@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from app.api.deps import (
     get_current_user,
@@ -354,6 +354,52 @@ async def stop_ais_decoding(
 ) -> dict:
     await stream_service.disable_ais(receiver_id)
     return ok({"message": "AIS decoding disabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/sstv/start")
+async def start_sstv_decoding(
+    receiver_id: str,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await service.status(receiver_id)
+    await stream_service.enable_sstv(receiver_id)
+    return ok({"message": "SSTV decoding enabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/sstv/stop")
+async def stop_sstv_decoding(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await stream_service.disable_sstv(receiver_id)
+    return ok({"message": "SSTV decoding disabled.", "receiver_id": receiver_id})
+
+
+@router.get("/{receiver_id}/sstv")
+async def get_sstv_snapshot(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    snapshot = stream_service.get_sstv_snapshot(receiver_id)
+    if snapshot is None:
+        raise ValidationAppError(f"SSTV decoding is not enabled for '{receiver_id}'.")
+    return ok(snapshot)
+
+
+@router.get("/{receiver_id}/sstv/image.png")
+async def get_sstv_image(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(get_current_user),
+) -> Response:
+    png_bytes = stream_service.get_sstv_image_png(receiver_id)
+    if png_bytes is None:
+        raise ValidationAppError(f"SSTV decoding is not enabled for '{receiver_id}'.")
+    return Response(content=png_bytes, media_type="image/png")
 
 
 @router.post("/{receiver_id}/signal-detection/start")

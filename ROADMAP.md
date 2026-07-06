@@ -305,12 +305,39 @@ Remaining
 
 ## Digital Modes
 
+Completed
+
+- **SSTV (Martin M1)** -- `decoders/sstv.py`: two-stage frequency
+  recovery (the FM discriminator recovers demodulated audio, then a
+  discrete Hilbert transform recovers *that audio's own* instantaneous
+  frequency, the 1200-2300Hz SSTV tone) feeding a sync-pulse-tracking
+  decoder that reconstructs a real image line by line. Verified
+  against a synthetic Martin M1 waveform (continuous-phase FM,
+  matching how a real transmitter's VCO behaves) -- a realistic
+  (spatially smooth, not per-pixel noise) 320x256 test image decodes
+  with the large majority of lines correct; see the module's "Known
+  limitation" docstring for the honest trade-off in its sync-tracking
+  heuristic. `GET /api/receivers/{id}/sstv/image.png` serves whatever
+  has decoded so far -- including mid-transmission -- so the frontend
+  (`ReceiverCard`'s "Decode SSTV" toggle) shows a picture literally
+  drawing itself in, line by line, live.
+- Real over-the-air verification is blocked by the same
+  `usbfs_memory_mb` capture-thread stall documented in "Known
+  Environment Blocks" (affects every RF decoder in this project
+  equally, not something specific to SSTV) -- the decode pipeline
+  itself is verified end-to-end via the REST test suite (using the
+  mock receiver plugin to produce real IQ samples deterministically)
+  and the synthetic-waveform unit tests.
+
 Remaining
 
 - FT8
 - FT4
 - WSPR
-- SSTV
+- Other SSTV modes (Scottie, Robot 36, PD120 -- the mode the ISS
+  actually uses for its periodic SSTV events) -- same "sync pulse +
+  per-pixel frequency-as-brightness" shape as Martin M1, different
+  timing/channel-order tables.
 - RTTY
 - DMR
 - P25

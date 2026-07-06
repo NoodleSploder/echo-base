@@ -23,6 +23,7 @@ code path.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import threading
 import time
@@ -30,6 +31,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 from app.core.events import EventBus
 from app.plugins.receiver import IqStreamHandle
@@ -40,6 +42,8 @@ from app.services.decoders.ax25 import format_callsign, format_path, parse_ax25_
 from app.services.decoders.mode_s import ModeSDecoder
 from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
+from app.services.decoders.sstv import HEIGHT as SSTV_HEIGHT
+from app.services.decoders.sstv import MartinM1Decoder
 from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator
 from app.services.receiver_service import ReceiverService
 from app.services.signal_detection import (
@@ -117,6 +121,8 @@ class _ReceiverCapture:
         self._ads_b_decoder: ModeSDecoder | None = None
         self._ais_enabled = False
         self._ais_decoder: AisDecoder | None = None
+        self._sstv_enabled = False
+        self._sstv_decoder: MartinM1Decoder | None = None
         self._signal_detection_enabled = False
         self._signal_margin_db = 0.0
         self._signal_center_frequency_hz: int | None = None
@@ -158,6 +164,7 @@ class _ReceiverCapture:
             "same_enabled": self._same_enabled,
             "ads_b_enabled": self._ads_b_enabled,
             "ais_enabled": self._ais_enabled,
+            "sstv_enabled": self._sstv_enabled,
             "signal_detection_enabled": self._signal_detection_enabled,
             "occupancy_enabled": self._occupancy_enabled,
         }
@@ -171,6 +178,7 @@ class _ReceiverCapture:
             and not self._same_enabled
             and not self._ads_b_enabled
             and not self._ais_enabled
+            and not self._sstv_enabled
             and not self._signal_detection_enabled
             and not self._occupancy_enabled
         )
@@ -206,6 +214,38 @@ class _ReceiverCapture:
     def disable_ais(self) -> None:
         self._ais_enabled = False
         self._ais_decoder = None
+
+    def enable_sstv(self) -> None:
+        self._sstv_enabled = True
+
+    def disable_sstv(self) -> None:
+        self._sstv_enabled = False
+        self._sstv_decoder = None
+
+    def sstv_snapshot(self) -> dict | None:
+        """A point-in-time read of the currently-decoding (or last
+        completed) image -- same "running state, not events" shape as
+        `occupancy_snapshot`. The image itself is served separately as
+        a PNG (`sstv_image_png`); this is just the progress metadata."""
+        if self._sstv_decoder is None:
+            return None
+        return {
+            "lines_decoded": self._sstv_decoder.lines_decoded,
+            "total_lines": SSTV_HEIGHT,
+            "is_complete": self._sstv_decoder.is_complete,
+        }
+
+    def sstv_image_png(self) -> bytes | None:
+        """Renders whatever's been decoded so far -- including a
+        still-in-progress image -- as a PNG, so the frontend can show
+        a picture literally drawing itself in line by line, the same
+        way a real SSTV waterfall display would."""
+        if self._sstv_decoder is None:
+            return None
+        image = Image.fromarray(self._sstv_decoder.image, mode="RGB")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
 
     def enable_signal_detection(self, margin_db: float, center_frequency_hz: int | None) -> None:
         self._signal_detection_enabled = True
@@ -345,6 +385,9 @@ class _ReceiverCapture:
 
                 if self._ais_enabled:
                     self._decode_ais(complex_samples, decimation)
+
+                if self._sstv_enabled:
+                    self._decode_sstv(complex_samples, decimation)
         except Exception:
             logger.exception("Capture worker for '%s' crashed", self.receiver_id)
         finally:
@@ -414,6 +457,19 @@ class _ReceiverCapture:
         audio = fm_discriminator(complex_samples, decimation)
         for message in self._ais_decoder.feed(audio):
             self._event_bus.emit("AisMessage", source=self.receiver_id, data=message)
+
+    def _decode_sstv(self, complex_samples: np.ndarray, decimation: int) -> None:
+        # Audio-rate like APRS/SAME/AIS (SSTV tones are exactly the
+        # kind of "frequency variation within the demodulated audio"
+        # signal fm_discriminator recovers) -- tune to a real SSTV
+        # frequency (e.g. 145.800MHz FM during an ISS SSTV event, or
+        # any local SSTV net) for this to decode anything real. No
+        # events emitted -- see sstv_image_png/sstv_snapshot, the same
+        # "running state, not discrete occurrences" shape as occupancy.
+        if self._sstv_decoder is None:
+            self._sstv_decoder = MartinM1Decoder(AUDIO_SAMPLE_RATE_HZ)
+        audio = fm_discriminator(complex_samples, decimation)
+        self._sstv_decoder.feed(audio)
 
     def _detect_signals(self, magnitude_db: np.ndarray, sample_rate_hz: int) -> None:
         assert self._peak_tracker is not None
@@ -614,6 +670,33 @@ class StreamService:
                 return
             capture.disable_ais()
             await self._drop_if_idle(receiver_id)
+
+    async def enable_sstv(self, receiver_id: str) -> None:
+        """Same idempotent shape as `enable_ais`, but decodes a picture
+        (Martin M1 SSTV) instead of a message stream -- polled via
+        `get_sstv_snapshot`/`get_sstv_image_png` rather than events,
+        the same "running state" shape as occupancy. Tune to a real
+        SSTV frequency (e.g. 145.800MHz FM during an ISS SSTV event)
+        for this to decode anything real."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_sstv()
+
+    async def disable_sstv(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_sstv()
+            await self._drop_if_idle(receiver_id)
+
+    def get_sstv_snapshot(self, receiver_id: str) -> dict | None:
+        capture = self._captures.get(receiver_id)
+        return capture.sstv_snapshot() if capture is not None else None
+
+    def get_sstv_image_png(self, receiver_id: str) -> bytes | None:
+        capture = self._captures.get(receiver_id)
+        return capture.sstv_image_png() if capture is not None else None
 
     async def enable_signal_detection(
         self, receiver_id: str, margin_db: float, center_frequency_hz: int | None

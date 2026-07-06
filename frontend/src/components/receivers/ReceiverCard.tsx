@@ -4,7 +4,9 @@ import {
   getOccupancy,
   getScanStatus,
   getSignalHistory,
+  getSstvSnapshot,
   setPpmCorrection,
+  sstvImagePath,
   startAdsBDecoding,
   startAisDecoding,
   startAprsDecoding,
@@ -13,6 +15,7 @@ import {
   startSameDecoding,
   startScan,
   startSignalDetection,
+  startSstvDecoding,
   stopAdsBDecoding,
   stopAisDecoding,
   stopAprsDecoding,
@@ -21,6 +24,7 @@ import {
   stopSameDecoding,
   stopScan,
   stopSignalDetection,
+  stopSstvDecoding,
   tuneReceiver,
 } from "../../api/receivers";
 import {
@@ -68,6 +72,11 @@ export function ReceiverCard({
   const [adsBBusy, setAdsBBusy] = useState(false);
   const [aisEnabled, setAisEnabled] = useState(false);
   const [aisBusy, setAisBusy] = useState(false);
+  const [sstvEnabled, setSstvEnabled] = useState(false);
+  const [sstvBusy, setSstvBusy] = useState(false);
+  const [sstvSnapshot, setSstvSnapshot] = useState<{ linesDecoded: number; totalLines: number } | null>(
+    null,
+  );
   const [scanFrequencies, setScanFrequencies] = useState("");
   const [scanDwellSeconds, setScanDwellSeconds] = useState(2);
   const [scanBusy, setScanBusy] = useState(false);
@@ -203,6 +212,21 @@ export function ReceiverCard({
     }
   }
 
+  async function handleToggleSstv() {
+    setSstvBusy(true);
+    try {
+      if (sstvEnabled) {
+        await stopSstvDecoding(receiver.id);
+        setSstvSnapshot(null);
+      } else {
+        await startSstvDecoding(receiver.id);
+      }
+      setSstvEnabled((prev) => !prev);
+    } finally {
+      setSstvBusy(false);
+    }
+  }
+
   async function refreshScanStatus() {
     try {
       const status = await getScanStatus(receiver.id);
@@ -323,6 +347,31 @@ export function ReceiverCard({
     };
   }, [occupancyEnabled, receiver.id]);
 
+  useEffect(() => {
+    if (!sstvEnabled) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const snapshot = await getSstvSnapshot(receiver.id);
+        if (!cancelled) {
+          setSstvSnapshot({ linesDecoded: snapshot.lines_decoded, totalLines: snapshot.total_lines });
+        }
+      } catch {
+        // Transient poll failure; keep showing the last good reading.
+      }
+    }
+    void poll();
+    // Fast enough to feel like watching the image draw in live, slow
+    // enough not to hammer the endpoint -- a full 256-line Martin M1
+    // image takes ~2 minutes to transmit, so a new line every second
+    // or so is still a meaningfully "live" refresh rate.
+    const interval = setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sstvEnabled, receiver.id]);
+
   async function handleToggleTriggeredRecording() {
     setTriggeredRecordingBusy(true);
     try {
@@ -364,6 +413,7 @@ export function ReceiverCard({
         if (typeof health.same_enabled === "boolean") setSameEnabled(health.same_enabled);
         if (typeof health.ads_b_enabled === "boolean") setAdsBEnabled(health.ads_b_enabled);
         if (typeof health.ais_enabled === "boolean") setAisEnabled(health.ais_enabled);
+        if (typeof health.sstv_enabled === "boolean") setSstvEnabled(health.sstv_enabled);
         if (typeof health.signal_detection_enabled === "boolean") {
           setSignalDetectionEnabled(health.signal_detection_enabled);
         }
@@ -675,6 +725,42 @@ export function ReceiverCard({
             >
               {aisEnabled ? "AIS Decoding On" : "Decode AIS"}
             </button>
+            <button
+              onClick={() => void handleToggleSstv()}
+              disabled={sstvBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                sstvEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Slow-Scan TV: tune to a real SSTV frequency (e.g. 145.800MHz FM during an ISS SSTV event) to watch a picture decode live, line by line"
+            >
+              {sstvEnabled ? "SSTV Decoding On" : "Decode SSTV"}
+            </button>
+          </div>
+        )}
+
+        {sstvEnabled && (
+          <div className="border-t border-base-700 pt-3">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
+              <span>SSTV Image (Martin M1)</span>
+              {sstvSnapshot && (
+                <span>
+                  {sstvSnapshot.linesDecoded} / {sstvSnapshot.totalLines} lines
+                  {sstvSnapshot.linesDecoded >= sstvSnapshot.totalLines && (
+                    <span className="ml-1 text-emerald-400">complete</span>
+                  )}
+                </span>
+              )}
+            </div>
+            <div className="overflow-hidden rounded-md border border-base-700 bg-black">
+              <img
+                src={`${sstvImagePath(receiver.id)}?t=${sstvSnapshot?.linesDecoded ?? 0}`}
+                alt="Live-decoding SSTV picture"
+                className="w-full"
+                style={{ imageRendering: "pixelated" }}
+              />
+            </div>
           </div>
         )}
 

@@ -74,6 +74,33 @@ async def test_ais_start_stop_via_rest(client, admin_user):
     assert stop.status_code == 200
 
 
+async def test_sstv_start_stop_and_query_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    start = await client.post("/api/receivers/mock:0/sstv/start")
+    assert start.status_code == 200
+
+    await asyncio.sleep(0.3)  # let at least one frame get fed to the decoder
+
+    snapshot = await client.get("/api/receivers/mock:0/sstv")
+    assert snapshot.status_code == 200
+    data = snapshot.json()["data"]
+    assert data["total_lines"] == 256
+    assert "lines_decoded" in data
+    assert "is_complete" in data
+
+    image = await client.get("/api/receivers/mock:0/sstv/image.png")
+    assert image.status_code == 200
+    assert image.headers["content-type"] == "image/png"
+    assert image.content[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG magic bytes, not an empty/error body
+
+    stop = await client.post("/api/receivers/mock:0/sstv/stop")
+    assert stop.status_code == 200
+
+    after_stop = await client.get("/api/receivers/mock:0/sstv")
+    assert after_stop.status_code == 422
+
+
 async def test_status_reflects_real_capture_without_start(client, admin_user):
     """A spectrum/audio subscriber makes IQ actually flow even if the
     user never clicked Start -- the reported state should say so."""
