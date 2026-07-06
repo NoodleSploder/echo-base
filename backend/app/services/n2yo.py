@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import httpx
 
-N2YO_BASE_URL = "https://www.n2yo.com/rest/v1/satellite"
+N2YO_BASE_URL = "https://api.n2yo.com/rest/v1/satellite"
 
 
 class N2yoError(Exception):

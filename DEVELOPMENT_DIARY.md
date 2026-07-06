@@ -4434,3 +4434,41 @@ needed: fetch a satellite's current TLE by NORAD catalog number.
 2. Doppler tracking across a pass (Phase 9's remaining "Tracking"
    item) is still open.
 3. Same environment blocks as ever for everything else.
+
+## Fixed: n2yo.py hit the wrong host, only caught once a real key existed
+
+The user provided a real n2yo.com API key and asked for it to be
+wired in (added to `config/config.yaml`, gitignored, not committed).
+The very first live call against n2yo's real servers immediately
+surfaced a real bug that the mock-transport tests couldn't have
+caught: `N2YO_BASE_URL` pointed at `www.n2yo.com`, which 404s --
+n2yo's actual API is served from `api.n2yo.com`, a different
+subdomain entirely. A `curl` straight to n2yo's own docs URL confirmed
+the correct host and reproduced the 404 outside the app first, before
+touching the code, to rule out anything else (key formatting, request
+shape) as the cause.
+
+One-line fix (`N2YO_BASE_URL = "https://api.n2yo.com/rest/v1/satellite"`).
+This is exactly the gap flagged as a limitation in the previous
+entry -- the mocked tests validate response *parsing* against n2yo's
+documented shape, but can't catch "is this the right server" the way
+an actual live call immediately does. Good case for why "verified
+against mocks" and "verified against the real service" are genuinely
+different claims, not a formality.
+
+## Verification
+
+- **Real, live, no longer mocked**: with the real API key configured,
+  `GET /api/satellites/tle/25338` against the actual running backend
+  returned a genuine current TLE for NOAA 15 straight from n2yo.com's
+  servers. Fed that real fetched TLE into `POST /api/satellites/passes`
+  for the same ground station used in earlier entries -- produced the
+  same shape of plausible 4-passes-over-24h schedule (~101min apart,
+  7-10min each, comparable elevations) as the Celestrak-TLE-based test
+  from the pass-prediction entry, which is exactly the cross-check
+  this was missing: two independent TLE sources (Celestrak, n2yo)
+  for the same real satellite agreeing on the same predicted passes.
+- Backend test suite re-run after the fix: still 159/159 (the fix
+  didn't change response parsing, only the request target, so no test
+  behavior changed -- the mocks were never exercising the real host to
+  begin with).

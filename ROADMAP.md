@@ -380,7 +380,10 @@ Completed
   `GET /api/satellites/tle/{norad_id}`, needs `satellites.n2yo_api_key`
   configured or 400s with a clear message pointing at
   n2yo.com/api. A "Fetch by NORAD ID" control on `/satellites` next to
-  manual TLE paste, which still always works.)
+  manual TLE paste, which still always works. Live-verified with a
+  real API key: fetched NOAA 15's real TLE and predicted the same
+  pass schedule an independent Celestrak-sourced TLE had already
+  produced.)
 
 Remaining
 
