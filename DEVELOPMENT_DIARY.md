@@ -383,3 +383,225 @@ Frontend (`frontend/`):
 2. Add Receiver Profiles (frequency/gain/bandwidth/decoder presets) since README and ARCHITECTURE.md both call this out explicitly for Phase 2.
 3. Start Phase 3 (Radio Manager / Hamlib integration) once Receiver Manager profiles land, following the same plugin-framework pattern established here.
 4. Add CI (lint + `pytest` + frontend `tsc`/`build`) so regressions are caught automatically as the plugin ecosystem grows.
+
+---
+
+# 2026-07-05 — start.sh Reads config.yaml; Vite allowedHosts
+
+## Summary
+
+Added a root `start.sh` that launches backend and frontend together
+for local testing, then closed a gap it surfaced: the dev server was
+accessed through a reverse proxy hostname
+(`echobase.deathstar.chickenkiller.com`) and Vite's `server.allowedHosts`
+protection correctly rejected it, since that hostname wasn't
+configured anywhere.
+
+## Features Added
+
+- `start.sh`: creates the backend venv on first run, resolves the
+  effective host/port/allowed-hosts by calling
+  `app.core.config.get_settings()` directly (so it can never drift from
+  what the app itself would actually bind to), waits for the health
+  check before starting the frontend, surfaces the first-run admin
+  password, and runs the frontend via `npm` or -- since this
+  environment has no Node.js installed -- a rootless `podman` Node 22
+  container.
+- `server.allowed_hosts` config field (`backend/app/core/config.py`),
+  threaded through `start.sh` to the frontend as `ECHO_BASE_ALLOWED_HOSTS`
+  and consumed by `frontend/vite.config.ts` as `server.allowedHosts`.
+
+## Architecture Decisions
+
+- **`start.sh` never re-implements YAML parsing.** It shells out to the
+  venv's Python to call `get_settings()` and print the resolved
+  host/port/allowed_hosts, guaranteeing the script and the app always
+  agree, regardless of whether the value came from `config.yaml`, an
+  `ECHO_BASE_*` env var, or a built-in default.
+- **`ECHO_BASE_BACKEND_PORT` (script convenience override) forces
+  `ECHO_BASE_SERVER__PORT` before resolving settings**, so a one-off
+  `ECHO_BASE_BACKEND_PORT=8811 ./start.sh` still binds the backend to
+  that same port rather than just changing where the frontend proxy
+  points.
+
+## Bugs Fixed
+
+- A `set -e` pipeline (`grep -A3 ... | grep -E "username|password"`)
+  aborted the whole script silently when the admin-password block
+  didn't fall within the fixed 3-line context window. Fixed by grepping
+  the `username:`/`password:` lines directly instead of anchoring
+  relative to another log line.
+- The first-run admin password (printed via `print()`, not logged) was
+  silently lost when stdout wasn't a TTY, because Python buffers
+  `print()` but the `logging` module flushes per record. Fixed with
+  `PYTHONUNBUFFERED=1` on the backend subprocess.
+
+## Files Created / Modified
+
+- `start.sh` (new)
+- `backend/app/core/config.py` -- `ServerSettings.allowed_hosts`
+- `frontend/vite.config.ts` -- reads `ECHO_BASE_ALLOWED_HOSTS`
+- `config/config.example.yaml`, `config/config.yaml` -- documented/set `allowed_hosts`
+
+## Verification
+
+- Ran `start.sh` end to end multiple times: fail-fast on a taken port,
+  successful run reading `server.port` from `config.yaml` with no env
+  var set, and successful run with `ECHO_BASE_BACKEND_PORT` override.
+- Confirmed via `curl -H "Host: ..."` that the configured hostname is
+  now accepted by the Vite dev server while an arbitrary unlisted
+  hostname is still correctly blocked.
+
+## Outstanding Work / Next Steps
+
+Unchanged from the previous entry -- IQ streaming, receiver profiles,
+Phase 3 (Radio Manager), and CI remain the recommended next steps.
+
+---
+
+# 2026-07-05 — Command-Center Dashboard Rebuild
+
+## Summary
+
+Replaced the original sidebar/topbar dashboard shell with a draggable,
+resizable, per-user widget grid modeled on NOC/observability
+dashboards, and fixed a frontend build break plus began un-mocking
+widgets with real backend data.
+
+## Motivation
+
+The original dashboard (fixed sidebar + topbar + a couple of static
+widgets) didn't match the "communications command center" UI direction
+set out in the project-inception entry above (dark theme, multiple
+receiver panels, waterfalls, spectrum displays, messaging center,
+digital mode monitoring, live activity feeds, all visually dense).
+This session built that layout out as a real, persisted, per-user grid
+rather than a fixed one-off page.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `GET/PUT /api/dashboard/layout`: persists a user's react-grid-layout
+  breakpoint config (`{lg, md, sm}` arrays) as opaque JSON, scoped to
+  the authenticated user (`backend/app/api/routes/dashboard.py`,
+  `backend/app/schemas/dashboard.py`, migration
+  `0002_add_dashboard_layout.py`).
+
+Frontend (`frontend/`):
+
+- `DashboardPage` rebuilt around `react-grid-layout`'s
+  `ResponsiveGridLayout`: 12 widgets (Receivers, Spectrum
+  Overview/Monitor, Activity Feed, System Status, Receiver Tiles,
+  Alerts, Digital Mode Radio, Messaging Center, Digital Decodes,
+  Recordings, System Log), drag-to-rearrange via a `.drag-handle`
+  region, resize, debounced auto-save to the new layout endpoint, and
+  a "Reset Layout" control. Falls back to a sane default layout (and a
+  stacked single-column layout at narrower breakpoints) when nothing
+  is saved yet.
+- New shared primitives: `Panel` (widget chrome + drag handle + a
+  `sample` badge for still-mocked widgets), `Sparkline`,
+  `SpectrumCanvas`, `MiniWaterfall` (`frontend/src/components/common/`).
+- Old fixed `Sidebar`/`Topbar` replaced with `TopNav` +
+  `BottomStatusBar`; navigation collapsed into a top bar consistent
+  with the new dense-grid layout; `ComingSoonPage` added as a
+  placeholder route target for not-yet-built subsystems (Radio
+  Manager, Messaging, etc.) so nav links don't 404.
+- Most widgets currently render `sampleData.ts` fixtures and are
+  labeled with a "Sample" badge in their header -- this is intentional
+  scaffolding for subsystems that don't have a backend yet (Phase 3+:
+  Messaging, Digital Modes, Recording), not an oversight.
+
+## Architecture Decisions
+
+- **Dashboard layout is stored as opaque JSON, not a typed schema**,
+  because it's react-grid-layout's own breakpoint/position/size
+  format -- the backend has no reason to understand or validate its
+  internal shape, only to persist it per user.
+- **Widgets are explicitly marked `sample` vs. real** (via `Panel`'s
+  `sample` prop) instead of silently mixing mock and live data. This
+  keeps the dashboard's visual richness (matching the NOC-style UI
+  goal) honest about what's actually wired to the backend today, and
+  gives a visible checklist of what "un-mocking" work remains.
+- **Un-mocking is done widget-by-widget**, starting with the ones with
+  the smallest true backend gap. `ActivityFeedWidget` and
+  `SystemLogWidget` already used the real event-bus WebSocket feed;
+  this session added `ReceiversPanelWidget` (now calls
+  `GET /api/receivers` on a 15s poll, matching `SystemStatusWidget`'s
+  pattern, with an explicit "no receivers detected" empty state)
+  rather than rewriting every widget at once.
+
+## Bugs Fixed
+
+- `frontend/vite.config.ts` referenced `process.env` (for
+  `ECHO_BASE_BACKEND_HOST`/`PORT`/`ALLOWED_HOSTS`, added in the
+  previous session) without `@types/node` in `devDependencies`,
+  breaking `tsc -b` with `Cannot find name 'process'`. This was a
+  latent break from before the outage -- nothing in that session's
+  frontend work exercised a full typechecked build. Fixed by adding
+  `@types/node` to `frontend/package.json`.
+
+## Files Created / Modified
+
+- `backend/app/api/routes/dashboard.py`, `backend/app/schemas/dashboard.py`,
+  `backend/alembic/versions/0002_add_dashboard_layout.py`,
+  `backend/tests/test_dashboard.py` (new)
+- `backend/app/api/router.py`, `backend/app/db/models/user.py`,
+  `backend/app/core/config.py` -- route registration, layout column on
+  `User`, minor config additions.
+- `frontend/src/pages/DashboardPage.tsx` -- rebuilt around
+  `react-grid-layout`.
+- `frontend/src/components/dashboard/*` (new) -- the 12 widgets above.
+- `frontend/src/components/common/{Panel,Sparkline,SpectrumCanvas,MiniWaterfall}.tsx` (new)
+- `frontend/src/components/layout/{TopNav,BottomStatusBar}.tsx` (new),
+  `Sidebar.tsx`/`Topbar.tsx` deleted, `AppShell.tsx` updated.
+- `frontend/src/lib/sampleData.ts` (new), `frontend/src/api/dashboard.ts` (new)
+- `frontend/src/pages/ComingSoonPage.tsx` (new)
+- `frontend/package.json` -- added `react-grid-layout`,
+  `@types/react-grid-layout`, `@types/node`.
+- `frontend/vite.config.ts` -- unrelated to this session's feature work,
+  but the `@types/node` fix lives here.
+- `start.sh` (new in a prior session, unchanged here).
+
+## Verification
+
+- Backend: `pytest` -- 15/15 passing, including new
+  `test_dashboard.py` layout get/round-trip/auth-required cases (fresh
+  `.venv` created and dependencies installed from
+  `requirements*.txt` to confirm a clean-machine run).
+- Frontend: `tsc -b && vite build` succeeds with zero errors (via the
+  rootless-podman Node 22 container, since Node isn't installed on the
+  host) after the `@types/node` fix -- previously failed with 4
+  TS errors.
+- Ran the full stack via `start.sh`: backend health check green,
+  logged in as `admin`, confirmed `GET/PUT /api/dashboard/layout`
+  round-trips over HTTP, and the Vite dev server serves the app (200).
+- No browser/display available in this environment, so the dashboard's
+  actual rendering, drag/resize interaction, and the newly-live
+  `ReceiversPanelWidget` empty-state were verified by reading the
+  component code and API responses, not by driving a real browser.
+
+## Outstanding Work
+
+- Most widgets (Alerts, Digital Mode Radio, Messaging Center, Digital
+  Decodes, Recordings, both spectrum widgets, Receiver Tiles) are still
+  sample data pending their respective backend subsystems.
+- No browser-based visual verification of the grid drag/resize
+  behavior has been done yet in this environment.
+- IQ streaming, Receiver Profiles, Phase 3 (Radio Manager / Hamlib),
+  and CI remain outstanding from prior entries.
+
+## Next Steps
+
+1. Wire `ReceiverTileGridWidget` to the same real `/api/receivers`
+   data now backing `ReceiversPanelWidget`, replacing its
+   `SAMPLE_RECEIVERS` usage and `MiniWaterfall` placeholder once IQ
+   streaming exists to feed it real spectrum data.
+2. Get real browser verification of the new grid dashboard (drag,
+   resize, persistence round-trip) once a display or headless browser
+   is available in this environment.
+3. Continue un-mocking widgets in order of smallest backend gap, same
+   pattern as `ReceiversPanelWidget` this session.
+4. Add CI (lint + `pytest` + frontend `tsc`/`build`) so a build break
+   like this session's `@types/node` gap is caught automatically
+   instead of surfacing at the next session's first build.

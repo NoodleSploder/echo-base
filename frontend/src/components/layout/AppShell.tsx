@@ -1,19 +1,17 @@
 import { Outlet } from "react-router-dom";
 import { EventStreamProvider } from "../../context/EventStreamContext";
-import { Sidebar } from "./Sidebar";
-import { Topbar } from "./Topbar";
+import { BottomStatusBar } from "./BottomStatusBar";
+import { TopNav } from "./TopNav";
 
 export function AppShell() {
   return (
     <EventStreamProvider enabled>
-      <div className="flex h-screen bg-base-950">
-        <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <Topbar />
-          <main className="flex-1 overflow-y-auto p-6">
-            <Outlet />
-          </main>
-        </div>
+      <div className="flex h-screen flex-col bg-base-950">
+        <TopNav />
+        <main className="flex-1 overflow-y-auto p-4">
+          <Outlet />
+        </main>
+        <BottomStatusBar />
       </div>
     </EventStreamProvider>
   );

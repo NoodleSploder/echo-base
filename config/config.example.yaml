@@ -16,6 +16,11 @@ server:
   cors_origins:
     - http://localhost:5173
     - http://127.0.0.1:5173
+  # Hostnames the frontend dev server should accept beyond localhost,
+  # e.g. when reached through a reverse proxy or tunnel. start.sh reads
+  # this and passes it to Vite (server.allowedHosts). Leave empty for
+  # local-only access.
+  allowed_hosts: []
 
 database:
   url: "sqlite+aiosqlite:///../data/echo-base.db"

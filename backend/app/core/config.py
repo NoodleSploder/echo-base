@@ -42,6 +42,11 @@ class ServerSettings(BaseModel):
     cors_origins: list[str] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"]
     )
+    # Hostnames the Vite dev server should accept (beyond localhost),
+    # e.g. when reached through a reverse proxy or tunnel. Read by
+    # start.sh and passed to frontend/vite.config.ts as
+    # ECHO_BASE_ALLOWED_HOSTS -- see Vite's server.allowedHosts.
+    allowed_hosts: list[str] = Field(default_factory=list)
 
 
 class DatabaseSettings(BaseModel):

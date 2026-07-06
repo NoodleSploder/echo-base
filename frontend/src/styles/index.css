@@ -5,3 +5,11 @@
 body {
   @apply bg-base-950 text-slate-100 antialiased;
 }
+
+.react-grid-item.react-grid-placeholder {
+  @apply rounded-lg bg-accent-500/20;
+}
+
+.react-resizable-handle {
+  z-index: 10;
+}
