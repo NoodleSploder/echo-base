@@ -4005,3 +4005,36 @@ across a restart.
 2. Same environment blocks as ever -- most of Phase 2's concretely
    scoped, hardware-testable-here items are now done; next slice will
    need a fresh look at `ROADMAP.md` across phases.
+
+## Added: Receiver Inventory frontend view
+
+Closes the "no dedicated frontend widget yet" gap from the receiver
+inventory entry above.
+
+- `ReceiverInventoryPanel`: a compact table (name/driver/serial/
+  first-seen/last-seen/Attached-or-not badge), polling
+  `GET /api/receivers/inventory` every 15s. Renders nothing at all if
+  the inventory is empty (a brand-new install with nothing ever
+  discovered yet) rather than an empty table shell.
+- Mounted on the Receivers page below `ReceiverProfilesPanel`.
+
+## Verification
+
+- Frontend: `npm run lint` clean (3 pre-existing warnings only, no
+  new ones); `tsc -b && vite build` clean.
+- **Real hardware/data**: queried `GET /api/receivers/inventory`
+  directly against the live backend and confirmed the response shape
+  matches exactly what the panel renders -- the actual RTL2838
+  ("Nooelec, NESDR SMArt v5" / rtl_sdr / serial 00000001), attached:
+  true, with real first/last-seen timestamps.
+- Could not visually confirm table rendering/styling itself -- no
+  browser in this environment (`ROADMAP.md`'s Known Environment
+  Blocks), same limitation as every other frontend-only entry in this
+  diary.
+
+## Next Steps
+
+1. Same environment blocks as ever. Phase 2 is now essentially
+   complete for everything testable without additional SDR hardware
+   or a browser -- next slice needs a fresh look across all phases in
+   `ROADMAP.md`.

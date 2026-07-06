@@ -154,14 +154,13 @@ Completed
   as toasts via `EventToastBridge`)
 - Receiver inventory persistence (`receiver_inventory` table: every receiver
   ever seen, survives unplugging and restarts, `GET /api/receivers/inventory`
-  flags each as currently `attached` or not -- no dedicated frontend widget yet,
-  API-only so far)
+  flags each as currently `attached` or not -- `ReceiverInventoryPanel` on the
+  Receivers page)
 
 Remaining
 
 - SoapySDR detection
 - Airspy / SDRplay / HackRF / PlutoSDR / LimeSDR plugins
-- A frontend view for the receiver inventory (currently API-only)
 
 ---
 

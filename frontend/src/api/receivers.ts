@@ -74,3 +74,16 @@ export interface CaptureHealth {
 
 export const getCaptureHealth = (id: string) =>
   api.get<CaptureHealth>(`/api/receivers/${encodeURIComponent(id)}/capture-health`);
+
+export interface ReceiverInventoryRecord {
+  receiver_id: string;
+  name: string;
+  driver: string;
+  serial: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  attached: boolean;
+}
+
+export const getReceiverInventory = () =>
+  api.get<ReceiverInventoryRecord[]>("/api/receivers/inventory");

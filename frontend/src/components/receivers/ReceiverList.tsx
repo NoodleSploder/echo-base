@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { discoverReceivers, listReceivers } from "../../api/receivers";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { ReceiverCard } from "./ReceiverCard";
+import { ReceiverInventoryPanel } from "./ReceiverInventoryPanel";
 import { ReceiverProfilesPanel } from "./ReceiverProfilesPanel";
 
 export function ReceiverList() {
@@ -72,6 +73,8 @@ export function ReceiverList() {
         receivers={receivers}
         onApplied={(receiverId, status) => setStatuses((prev) => ({ ...prev, [receiverId]: status }))}
       />
+
+      <ReceiverInventoryPanel />
     </div>
   );
 }
