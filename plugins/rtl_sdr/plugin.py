@@ -53,6 +53,7 @@ class _RtlSdrIqStream:
                 self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._process.kill()
+                self._process.wait()
 
 
 class RtlSdrReceiverPlugin(ReceiverPlugin):

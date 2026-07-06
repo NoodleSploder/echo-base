@@ -3344,3 +3344,54 @@ is) -- no new capture logic, no new StreamService concept.
 3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
    hardware is available, or get real browser/audio verification once
    available.
+## Fixed: Listen/Record silently going dead after a capture crash
+
+The user reported that live audio ("Listen"), which had worked
+earlier in the session, now produced no sound at all, and asked for
+recording/playback to be confirmed too.
+
+Backend logs showed a defunct `[rtl_sdr] <defunct>` zombie process
+from earlier in the session, and manually invoking `rtl_sdr` against
+the real dongle worked fine standalone -- so the hardware and the
+`rtl_sdr` binary were never the problem. The real bug was in
+`StreamService`: `_ReceiverCapture._run()` (the background thread that
+reads IQ off the `rtl_sdr` subprocess and fans it out to
+spectrum/audio/recording subscribers) can exit on its own if the
+subprocess dies (crash, `PLL not locked!` glitch, anything), but
+nothing ever removed the now-dead `_ReceiverCapture` from
+`StreamService._captures`. Every subsequent `subscribe_audio` /
+`subscribe_iq` call (Listen, Record, APRS, SAME, spectrum) found the
+stale entry via `_get_or_create` and happily attached a new subscriber
+queue to a thread that would never broadcast to it again -- no
+exception, no error, just silence forever until the backend was
+restarted. This explains the "it worked, then stopped, for
+everything" shape of the report: one crashed capture (from whatever
+first triggered it) poisoned every feature sharing that receiver_id
+from that point on.
+
+Fix: added `_ReceiverCapture.is_alive()` (checks the worker thread),
+and `StreamService._get_or_create` now detects a dead-but-still-cached
+capture, drops it, and spins up a fresh one instead of reusing it.
+Also fixed a related zombie-process leak in the `rtl_sdr` plugin's
+`_RtlSdrIqStream.close()`: it called `kill()` after a `terminate()`
+timeout but never `wait()`-ed afterward, leaving an actual `<defunct>`
+zombie in the process table (visible via `ps aux`) -- this was the
+smoking gun that pointed at a completed-but-uncleaned capture in the
+first place.
+
+**Verified against real hardware after restarting the backend with
+the fix:**
+- **Listen**: `/ws/audio/rtl_sdr:00000001?mode=fm` -- real PCM16,
+  RMS ~7800-9300, full dynamic range.
+- **Recording**: a 6-second FM recording produced a real 469KB/4.89s
+  WAV (RMS ~8484, full range) -- before the fix, the identical
+  recording call against the poisoned capture produced a 44-byte
+  (header-only, zero-frame) file.
+- **Playback**: recorded 3s of IQ, started playback, subscribed to
+  `/ws/spectrum/{playback_id}` -- real FFT frames (peaks 17.5-24dB)
+  came back, then cleaned up (deleted) the test recording.
+
+All test recordings created during this verification were deleted
+afterward via the real `DELETE /api/recordings/{filename}` endpoint,
+consistent with every other real-hardware verification entry in this
+diary.

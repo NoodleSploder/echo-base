@@ -123,6 +123,14 @@ class _ReceiverCapture:
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
+    def is_alive(self) -> bool:
+        """False once the capture thread has exited on its own (e.g. the
+        underlying `rtl_sdr` subprocess died) -- distinct from `is_idle()`,
+        which is about subscriber count, not worker health. A dead-but-still-
+        `is_idle()`-false capture would otherwise keep matching subscribers
+        against a thread that will never broadcast anything again."""
+        return self._thread is not None and self._thread.is_alive()
+
     def is_idle(self) -> bool:
         return (
             not self._spectrum_subscribers
@@ -381,6 +389,14 @@ class StreamService:
 
     async def _get_or_create(self, receiver_id: str) -> _ReceiverCapture:
         capture = self._captures.get(receiver_id)
+        if capture is not None and not capture.is_alive():
+            # The worker thread exited on its own (subprocess crashed/died)
+            # without any subscriber unsubscribing, so nothing ever dropped
+            # it from `_captures` -- reusing it would silently accept new
+            # subscribers that a dead thread can never broadcast to.
+            del self._captures[receiver_id]
+            await asyncio.to_thread(capture.stop)
+            capture = None
         if capture is None:
             playback_source = self._playback_sources.get(receiver_id)
             if playback_source is not None:
