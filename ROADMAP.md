@@ -701,12 +701,26 @@ Completed
   `L.imageOverlay`, the same "normalize behind the backend, don't make
   the frontend deal with a provider's raw shape" reasoning as every
   other provider adapter.
+- X-ray flux: `GET /api/space-weather/xray-flux`, filtered to GOES's
+  standard long (0.1-0.8nm) channel, classified server-side into the
+  conventional A/B/C/M/X flare class + magnitude (`classify_xray_flux`,
+  a pure function tested against known reference flux values) -- a
+  small sidebar badge on `/map`, color-coded for M/X (real flare
+  activity).
+- Solar wind: `GET /api/space-weather/solar-wind`, combining NOAA's
+  separate proton-speed and IMF Bt/Bz "summary" products (single
+  latest reading each, not a time series -- the `-1-day` time-series
+  product names checked first turned out not to exist) into one
+  normalized reading.
 
 Remaining
 
-- Solar wind, X-ray/proton flux, CME alerts, radio blackouts, HF
-  fadeouts -- same provider (NOAA SWPC publishes all of these too),
-  not yet wired up. Each is the same shape of work as Kp/aurora were.
+- CME alerts, radio blackouts, HF fadeouts -- same provider (NOAA SWPC
+  publishes these too), not yet wired up. Each is the same shape of
+  work as Kp/aurora/X-ray/solar-wind were.
+- Solar wind/X-ray as map overlays (currently sidebar readouts only,
+  not spatially plotted -- unlike Kp/aurora, neither has an inherent
+  geographic distribution to render as a layer).
 - Designed to allow additional sources to supplement NOAA later
   (provider-abstraction shape, not a NOAA-specific integration) --
   no second source implemented yet since none was needed for what's

@@ -1,7 +1,7 @@
 """NOAA Space Weather Prediction Center (SWPC) provider adapter.
 
 Free, no API key, no registration -- unlike n2yo.com, nothing here is
-gated. Two datasets:
+gated. Four datasets:
 
 - **Planetary K-index** (`fetch_kp_index`): a simple time series,
   passed through close to as-is.
@@ -15,6 +15,16 @@ gated. Two datasets:
   testable against a synthetic grid) that the frontend displays with
   one `L.imageOverlay`, the same way `services/n2yo.py` isolates its
   own external provider's quirks behind a clean interface.
+- **GOES X-ray flux** (`fetch_xray_flux`): filtered to the standard
+  0.1-0.8nm (long) channel used for conventional flare classification;
+  `classify_xray_flux` derives the familiar A/B/C/M/X class + magnitude
+  (e.g. "M1.2") from the raw watts/m^2 reading, a pure function so it's
+  testable against known reference flux values without a live fetch.
+- **Solar wind** (`fetch_solar_wind`): NOAA's own lightweight "summary"
+  products (single latest reading, not a full time series) for proton
+  speed and IMF Bt/Bz -- deliberately not the `-1-day` time-series
+  products, which 404 (checked with a live curl before writing this;
+  NOAA doesn't currently publish those particular file names).
 
 `SpaceWeatherService` holds the last-successfully-fetched data in
 memory and only ever replaces it on a *successful* refresh -- a
@@ -39,6 +49,10 @@ logger = logging.getLogger("echo_base.noaa_swpc")
 
 KP_INDEX_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
 AURORA_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json"
+XRAY_FLUX_URL = "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json"
+XRAY_LONG_CHANNEL = "0.1-0.8nm"  # the standard flare-classification channel
+SOLAR_WIND_MAG_URL = "https://services.swpc.noaa.gov/products/summary/solar-wind-mag-field.json"
+SOLAR_WIND_SPEED_URL = "https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json"
 
 GRID_LON_COUNT = 360
 GRID_LAT_COUNT = 181  # -90..90 inclusive
@@ -149,6 +163,84 @@ def render_aurora_png(grid: AuroraGrid) -> bytes:
     return buffer.getvalue()
 
 
+def classify_xray_flux(flux: float) -> str:
+    """Standard GOES flare classification: a letter class (A/B/C/M/X)
+    plus a magnitude within that class, e.g. flux=2.4e-6 -> "C2.4".
+    Each class is a decade in watts/m^2, starting at A=1e-8; anything
+    below A-class or at/above X10 still gets a (small/large) magnitude
+    rather than clamping, since real flux does go outside the "normal"
+    A-X range."""
+    if flux <= 0:
+        return "A0.0"
+    thresholds = [("X", 1e-4), ("M", 1e-5), ("C", 1e-6), ("B", 1e-7), ("A", 1e-8)]
+    for letter, threshold in thresholds:
+        if flux >= threshold:
+            return f"{letter}{flux / threshold:.1f}"
+    return f"A{flux / 1e-8:.1f}"
+
+
+async def fetch_xray_flux() -> list[dict[str, object]]:
+    """Returns the long-channel (0.1-0.8nm) readings only -- NOAA
+    publishes both a short and long channel per satellite/timestamp,
+    but flare classification is conventionally done on the long channel
+    alone."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(XRAY_FLUX_URL)
+    except httpx.HTTPError as exc:
+        raise SwpcError(f"Could not reach NOAA SWPC (X-ray flux): {exc}") from exc
+
+    if response.status_code != 200:
+        raise SwpcError(f"NOAA SWPC X-ray flux endpoint returned HTTP {response.status_code}.")
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise SwpcError("NOAA SWPC X-ray flux endpoint returned a non-JSON response.") from exc
+    if not isinstance(data, list) or not data:
+        raise SwpcError("NOAA SWPC X-ray flux endpoint returned an empty/unexpected response.")
+
+    long_channel = [entry for entry in data if entry.get("energy") == XRAY_LONG_CHANNEL]
+    if not long_channel:
+        raise SwpcError("NOAA SWPC X-ray flux endpoint had no long-channel (0.1-0.8nm) readings.")
+    return long_channel
+
+
+async def fetch_solar_wind() -> dict[str, object]:
+    """NOAA's "summary" products are each a single latest reading
+    (not a time series) -- one for the interplanetary magnetic field
+    (Bt/Bz), one for proton speed. Combined here into one normalized
+    reading so the frontend deals with one shape, not two provider
+    quirks."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            mag_response = await client.get(SOLAR_WIND_MAG_URL)
+            speed_response = await client.get(SOLAR_WIND_SPEED_URL)
+    except httpx.HTTPError as exc:
+        raise SwpcError(f"Could not reach NOAA SWPC (solar wind): {exc}") from exc
+
+    if mag_response.status_code != 200 or speed_response.status_code != 200:
+        raise SwpcError(
+            f"NOAA SWPC solar wind endpoints returned HTTP "
+            f"{mag_response.status_code}/{speed_response.status_code}."
+        )
+    try:
+        mag_data = mag_response.json()
+        speed_data = speed_response.json()
+    except ValueError as exc:
+        raise SwpcError("NOAA SWPC solar wind endpoint returned a non-JSON response.") from exc
+    if not isinstance(mag_data, list) or not mag_data or not isinstance(speed_data, list) or not speed_data:
+        raise SwpcError("NOAA SWPC solar wind endpoint returned an empty/unexpected response.")
+
+    mag_latest = mag_data[-1]
+    speed_latest = speed_data[-1]
+    return {
+        "time_tag": mag_latest.get("time_tag"),
+        "bt_nt": mag_latest.get("bt"),
+        "bz_gsm_nt": mag_latest.get("bz_gsm"),
+        "proton_speed_km_s": speed_latest.get("proton_speed"),
+    }
+
+
 class SpaceWeatherService:
     """Holds the last-successfully-fetched Kp/aurora data in memory --
     a refresh failure logs and leaves the previous data in place rather
@@ -161,6 +253,10 @@ class SpaceWeatherService:
         self._aurora_png: bytes | None = None
         self._aurora_meta: dict[str, str] | None = None
         self._aurora_updated_at: datetime | None = None
+        self._xray_readings: list[dict[str, object]] | None = None
+        self._xray_updated_at: datetime | None = None
+        self._solar_wind: dict[str, object] | None = None
+        self._solar_wind_updated_at: datetime | None = None
 
     async def refresh_kp(self) -> None:
         try:
@@ -182,6 +278,24 @@ class SpaceWeatherService:
         self._aurora_meta = {"observation_time": grid.observation_time, "forecast_time": grid.forecast_time}
         self._aurora_updated_at = datetime.now(UTC)
 
+    async def refresh_xray(self) -> None:
+        try:
+            readings = await fetch_xray_flux()
+        except SwpcError:
+            logger.exception("X-ray flux refresh failed; keeping last known data")
+            return
+        self._xray_readings = readings
+        self._xray_updated_at = datetime.now(UTC)
+
+    async def refresh_solar_wind(self) -> None:
+        try:
+            reading = await fetch_solar_wind()
+        except SwpcError:
+            logger.exception("Solar wind refresh failed; keeping last known data")
+            return
+        self._solar_wind = reading
+        self._solar_wind_updated_at = datetime.now(UTC)
+
     def get_kp(self) -> dict[str, object] | None:
         if self._kp_readings is None or self._kp_updated_at is None:
             return None
@@ -194,3 +308,19 @@ class SpaceWeatherService:
         if self._aurora_meta is None or self._aurora_updated_at is None:
             return None
         return {**self._aurora_meta, "cached_at": self._aurora_updated_at.isoformat()}
+
+    def get_xray(self) -> dict[str, object] | None:
+        if self._xray_readings is None or self._xray_updated_at is None:
+            return None
+        latest = self._xray_readings[-1]
+        latest_flux = latest.get("flux")
+        return {
+            "readings": self._xray_readings,
+            "latest_class": classify_xray_flux(float(latest_flux)) if latest_flux is not None else None,
+            "cached_at": self._xray_updated_at.isoformat(),
+        }
+
+    def get_solar_wind(self) -> dict[str, object] | None:
+        if self._solar_wind is None or self._solar_wind_updated_at is None:
+            return None
+        return {**self._solar_wind, "cached_at": self._solar_wind_updated_at.isoformat()}

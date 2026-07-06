@@ -17,11 +17,17 @@ from PIL import Image
 from app.services.noaa_swpc import (
     AURORA_URL,
     KP_INDEX_URL,
+    SOLAR_WIND_MAG_URL,
+    SOLAR_WIND_SPEED_URL,
+    XRAY_FLUX_URL,
     AuroraGrid,
     SpaceWeatherService,
     SwpcError,
+    classify_xray_flux,
     fetch_aurora_grid,
     fetch_kp_index,
+    fetch_solar_wind,
+    fetch_xray_flux,
     render_aurora_png,
 )
 
@@ -144,3 +150,82 @@ async def test_space_weather_service_keeps_last_good_data_on_failure(monkeypatch
     await service.refresh_kp()  # this one 500s
     second = service.get_kp()
     assert second["readings"] == first["readings"]  # unchanged, not cleared
+
+
+def test_classify_xray_flux_known_reference_values():
+    # Real GOES classification reference points -- e.g. a flux of
+    # 2.4e-6 W/m^2 is a C2.4 flare (C-class starts at 1e-6).
+    assert classify_xray_flux(2.4e-6) == "C2.4"
+    assert classify_xray_flux(1.2e-5) == "M1.2"
+    assert classify_xray_flux(3.4e-4) == "X3.4"
+    assert classify_xray_flux(5.0e-8) == "A5.0"
+
+
+async def test_fetch_xray_flux_filters_to_long_channel(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url).startswith(XRAY_FLUX_URL)
+        return httpx.Response(
+            200,
+            json=[
+                {"time_tag": "t1", "satellite": 18, "flux": 9e-8, "energy": "0.05-0.4nm"},
+                {"time_tag": "t1", "satellite": 18, "flux": 2.4e-6, "energy": "0.1-0.8nm"},
+                {"time_tag": "t2", "satellite": 18, "flux": 2.5e-6, "energy": "0.1-0.8nm"},
+            ],
+        )
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock_client(handler))
+    readings = await fetch_xray_flux()
+    assert len(readings) == 2
+    assert all(r["energy"] == "0.1-0.8nm" for r in readings)
+    assert readings[-1]["flux"] == 2.5e-6
+
+
+async def test_fetch_xray_flux_raises_when_no_long_channel(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"time_tag": "t1", "flux": 9e-8, "energy": "0.05-0.4nm"}])
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock_client(handler))
+    with pytest.raises(SwpcError):
+        await fetch_xray_flux()
+
+
+async def test_fetch_solar_wind_combines_mag_and_speed(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith(SOLAR_WIND_MAG_URL):
+            return httpx.Response(200, json=[{"bt": 6, "bz_gsm": -1, "time_tag": "2026-07-06T21:54:00Z"}])
+        assert url.startswith(SOLAR_WIND_SPEED_URL)
+        return httpx.Response(200, json=[{"proton_speed": 427, "time_tag": "2026-07-06T21:54:00Z"}])
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock_client(handler))
+    reading = await fetch_solar_wind()
+    assert reading["bt_nt"] == 6
+    assert reading["bz_gsm_nt"] == -1
+    assert reading["proton_speed_km_s"] == 427
+
+
+async def test_space_weather_service_xray_and_solar_wind_via_refresh(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.startswith(XRAY_FLUX_URL):
+            return httpx.Response(
+                200, json=[{"time_tag": "t1", "flux": 2.4e-6, "energy": "0.1-0.8nm"}]
+            )
+        if url.startswith(SOLAR_WIND_MAG_URL):
+            return httpx.Response(200, json=[{"bt": 6, "bz_gsm": -1, "time_tag": "t1"}])
+        assert url.startswith(SOLAR_WIND_SPEED_URL)
+        return httpx.Response(200, json=[{"proton_speed": 427, "time_tag": "t1"}])
+
+    monkeypatch.setattr(httpx, "AsyncClient", _mock_client(handler))
+
+    service = SpaceWeatherService()
+    assert service.get_xray() is None
+    assert service.get_solar_wind() is None
+
+    await service.refresh_xray()
+    xray = service.get_xray()
+    assert xray["latest_class"] == "C2.4"
+
+    await service.refresh_solar_wind()
+    solar_wind = service.get_solar_wind()
+    assert solar_wind["proton_speed_km_s"] == 427

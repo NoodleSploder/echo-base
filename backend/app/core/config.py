@@ -104,6 +104,8 @@ class SpaceWeatherSettings(BaseModel):
     # ~1x/minute nowcast product).
     kp_refresh_seconds: float = 300.0
     aurora_refresh_seconds: float = 300.0
+    xray_refresh_seconds: float = 300.0
+    solar_wind_refresh_seconds: float = 300.0
 
 
 class HistorySettings(BaseModel):

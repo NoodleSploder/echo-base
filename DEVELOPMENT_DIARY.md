@@ -4809,3 +4809,72 @@ rather than a duplicate type), `GeospatialPage.tsx`.
 3. ADS-B/AIS position decoding remain the two biggest real gaps for
    unlocking their respective map layers -- CPR frame-pairing and
    multi-type AIS payload parsing, respectively.
+
+## Added: NOAA X-ray flux + Solar wind readouts
+
+Extended `services/noaa_swpc.py` with two more free, keyless NOAA SWPC
+datasets, directly addressing the "not yet wired up" gap the previous
+Space Weather diary entry called out. Same adapter shape as Kp/Aurora
+(background-refreshed, last-known-good caching, graceful failure) --
+no new pattern needed, which is exactly the point of that shape.
+
+**X-ray flux**: GOES publishes both a short (0.05-0.4nm) and long
+(0.1-0.8nm) channel per reading; conventional flare classification
+(the familiar A/B/C/M/X scale amateur/professional space-weather
+watchers actually use) is done on the long channel only, so
+`fetch_xray_flux` filters to it. `classify_xray_flux` is a pure
+function (flux in W/m^2 -> e.g. "C2.4") tested against known reference
+values rather than just "the fetch didn't crash" -- classification
+logic is exactly the kind of off-by-one-prone thing that's worth
+locking down with real numbers (checked C-class starts at 1e-6, M at
+1e-5, X at 1e-4 against NOAA's own documentation before writing the
+thresholds table).
+
+**Solar wind -- a real dead end, caught before writing any parsing
+code**: went looking for NOAA's `-1-day` time-series products
+(`solar-wind/plasma-1-day.json`, `solar-wind/mag-1-day.json`, the
+names that show up in older NOAA documentation/blog posts) and got a
+plain HTTP 404 on both via curl. Rather than assume the URLs were
+subtly wrong and guess variations, checked NOAA's actual `/products/`
+directory listing and found the real current names: `summary/
+solar-wind-mag-field.json` and `summary/solar-wind-speed.json` --
+each a single latest reading, not a time series. `fetch_solar_wind`
+fetches both and combines them into one normalized reading (Bt, Bz,
+proton speed) so the frontend deals with one shape, not NOAA's own
+two-separate-files-for-one-concept split.
+
+**Frontend**: no new layer -- neither dataset has an inherent
+geographic distribution (X-ray flux and solar wind are single global
+readings, not point-plottable), so both are compact sidebar readouts
+in the existing "Space Weather" panel next to Kp: an X-ray flare-class
+badge (color-coded for M/X, same severity-coloring pattern as the Kp
+badge) and a one-line "Solar wind: 412 km/s, Bz 1 nT" readout.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 175/175 passing (5 new:
+  `classify_xray_flux` against four known reference flux values,
+  long-channel filtering with a mixed short/long-channel mocked
+  response, a raises-when-no-long-channel case, mocked
+  mag+speed-combination parsing, and a `SpaceWeatherService` refresh
+  round-trip for both).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real, live data**: restarted the backend (after finding and
+  killing yet another stale duplicate `uvicorn` process from earlier
+  in the session -- worth periodically checking `pgrep -af uvicorn`,
+  since the backgrounding quirk in this environment has caused this
+  more than once) and confirmed all four space-weather endpoints
+  return real NOAA data simultaneously at startup: Kp index, aurora
+  grid, X-ray flux (~2.4e-6 W/m^2, correctly quiet-sun C-class), and
+  solar wind (412 km/s, Bz +1 nT) -- all fetched live from
+  `services.swpc.noaa.gov` in the startup log, not mocked.
+
+## Next Steps
+
+1. CME alerts, radio blackouts, HF fadeouts remain unwired (same NOAA
+   SWPC provider, same adapter shape).
+2. RF Coverage modeling (unblocked by Receiver Sites, still needs the
+   actual propagation math).
+3. ADS-B/AIS position decoding remain the two biggest real data gaps
+   for their respective map layers.

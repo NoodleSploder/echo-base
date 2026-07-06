@@ -54,3 +54,29 @@ async def get_aurora_meta(
             "Aurora forecast not yet available -- the first background refresh hasn't completed."
         )
     return ok(meta)
+
+
+@router.get("/xray-flux")
+async def get_xray_flux(
+    service: SpaceWeatherService = Depends(get_space_weather_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    xray = service.get_xray()
+    if xray is None:
+        raise NotFoundError(
+            "X-ray flux not yet available -- the first background refresh hasn't completed."
+        )
+    return ok(xray)
+
+
+@router.get("/solar-wind")
+async def get_solar_wind(
+    service: SpaceWeatherService = Depends(get_space_weather_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    solar_wind = service.get_solar_wind()
+    if solar_wind is None:
+        raise NotFoundError(
+            "Solar wind not yet available -- the first background refresh hasn't completed."
+        )
+    return ok(solar_wind)

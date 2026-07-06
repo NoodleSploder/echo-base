@@ -190,6 +190,18 @@ async def lifespan(app: FastAPI):
             "Aurora forecast",
         )
     )
+    xray_task = asyncio.create_task(
+        _periodic_refresh_loop(
+            space_weather_service.refresh_xray, settings.space_weather.xray_refresh_seconds, "X-ray flux"
+        )
+    )
+    solar_wind_task = asyncio.create_task(
+        _periodic_refresh_loop(
+            space_weather_service.refresh_solar_wind,
+            settings.space_weather.solar_wind_refresh_seconds,
+            "Solar wind",
+        )
+    )
 
     logger.info(
         "Echo Base startup complete",
@@ -202,12 +214,18 @@ async def lifespan(app: FastAPI):
     prune_task.cancel()
     kp_task.cancel()
     aurora_task.cancel()
+    xray_task.cancel()
+    solar_wind_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await prune_task
     with contextlib.suppress(asyncio.CancelledError):
         await kp_task
     with contextlib.suppress(asyncio.CancelledError):
         await aurora_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await xray_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await solar_wind_task
     spectrum_scan_service.shutdown()
     hotplug_monitor.shutdown()
     scheduled_recording_service.shutdown()

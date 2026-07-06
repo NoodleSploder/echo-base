@@ -2,7 +2,7 @@ import L from "leaflet";
 import { useEffect, useRef, useState } from "react";
 import { getReceiverInventory, setReceiverLocation, type ReceiverInventoryRecord } from "../api/receivers";
 import { fetchTleByNoradId } from "../api/satellites";
-import { getKpIndex } from "../api/spaceWeather";
+import { getKpIndex, getSolarWind, getXrayFlux } from "../api/spaceWeather";
 import { createRegisteredLayers } from "../geo/LayerRegistry";
 import "../geo/layers"; // side-effect import: every layer module registers itself
 import { SatelliteTrackLayer } from "../geo/layers/SatelliteTrackLayer";
@@ -48,6 +48,32 @@ export function GeospatialPage() {
   const [trackedSatellite, setTrackedSatellite] = useState<string | null>(null);
 
   const [kp, setKp] = useState<{ value: number; timeTag: string } | null>(null);
+  const [xrayClass, setXrayClass] = useState<string | null>(null);
+  const [solarWind, setSolarWind] = useState<{ speed: number | null; bz: number | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function pollXrayAndSolarWind() {
+      try {
+        const xray = await getXrayFlux();
+        if (!cancelled) setXrayClass(xray.latest_class);
+      } catch {
+        // Not available yet, or transient failure.
+      }
+      try {
+        const wind = await getSolarWind();
+        if (!cancelled) setSolarWind({ speed: wind.proton_speed_km_s, bz: wind.bz_gsm_nt });
+      } catch {
+        // Not available yet, or transient failure.
+      }
+    }
+    void pollXrayAndSolarWind();
+    const interval = setInterval(pollXrayAndSolarWind, 60000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const [receivers, setReceivers] = useState<ReceiverInventoryRecord[]>([]);
   const [selectedReceiverId, setSelectedReceiverId] = useState("");
@@ -332,6 +358,27 @@ export function GeospatialPage() {
             </div>
           ) : (
             <p className="text-[11px] text-slate-500">Loading...</p>
+          )}
+          <div className="mt-1.5 flex items-center gap-2 text-xs">
+            <span className="text-slate-400">X-ray</span>
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono font-semibold ${
+                xrayClass?.startsWith("X")
+                  ? "bg-red-500/20 text-red-400"
+                  : xrayClass?.startsWith("M")
+                    ? "bg-amber-500/20 text-amber-400"
+                    : "bg-slate-700/40 text-slate-300"
+              }`}
+              title="GOES long-channel (0.1-0.8nm) flare class -- NOAA SWPC"
+            >
+              {xrayClass ?? "..."}
+            </span>
+          </div>
+          {solarWind && (
+            <div className="mt-1.5 text-[11px] text-slate-400">
+              Solar wind: {solarWind.speed !== null ? `${solarWind.speed} km/s` : "?"}
+              {solarWind.bz !== null && `, Bz ${solarWind.bz} nT`}
+            </div>
           )}
         </div>
 
