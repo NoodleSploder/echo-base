@@ -36,7 +36,14 @@ export function GeospatialPage() {
     const map = L.map(mapContainerRef.current, { zoomControl: true }).setView(INITIAL_CENTER, INITIAL_ZOOM);
     L.control.scale({ imperial: false }).addTo(map);
     map.on("mousemove", (event: L.LeafletMouseEvent) => {
-      setCursor({ lat: event.latlng.lat, lon: event.latlng.lng });
+      // Leaflet lets the map scroll continuously across repeated
+      // "world copies" past +-180deg longitude (so panning feels
+      // seamless) -- event.latlng.lng reflects that unwrapped
+      // coordinate (e.g. -352 instead of 8), which is correct for
+      // Leaflet's own purposes but not what a human wants to read.
+      // wrap() normalizes it back to -180..180 for display only.
+      const wrapped = event.latlng.wrap();
+      setCursor({ lat: wrapped.lat, lon: wrapped.lng });
     });
     mapRef.current = map;
 

@@ -4569,3 +4569,43 @@ Completed/Remaining split per milestone).
    currently blocked on decoder work, not the map framework.
 4. Same environment blocks as ever (no browser for visual
    verification, no confirmed real APRS/AIS/ADS-B traffic in range).
+
+## Fixed: mouse coordinate readout showed unwrapped longitude
+
+Real browser verification (the user tested `/map` directly and sent a
+screenshot + console output -- the first actual visual confirmation
+this platform-in-progress has gotten, since this environment has no
+browser). Two findings:
+
+1. **Not a bug**: the visible gap in the ISS ground track (near
+   Australia/the Pacific) is the antimeridian (180deg longitude / date
+   line) crossing -- `SatelliteTrackLayer`'s intentional segment split
+   so the polyline doesn't draw a spurious line straight across the
+   whole map connecting +179deg to -179deg. Every real satellite
+   tracker shows the same break for a pass that crosses the date line;
+   confirmed this is correct, not something to fix.
+2. **A real bug**: the mouse-coordinate readout showed longitude
+   values like `-352.6638` instead of a sane `-180..180` range --
+   Leaflet lets the map pan continuously across repeated "world
+   copies" past +-180deg (so scrolling feels seamless), and
+   `event.latlng.lng` reflects that raw unwrapped coordinate. Fixed
+   by calling `.wrap()` on the event's `LatLng` before display --
+   Leaflet's own built-in normalization for exactly this, not a
+   custom modulo calculation.
+
+Also confirmed independently, straight from the screenshot: real dark
+map tiles rendering, both layers listed with live-indicator dots, the
+satellite picker fetching a real TLE (ISS, NORAD 25544) and drawing a
+real ground track + current position, and a clean browser console (no
+errors -- the two WebSocket warnings shown are unrelated pre-existing
+`/ws/events`/`/ws/spectrum` reconnect noise, not anything from this
+slice).
+
+## Verification
+
+- Frontend: `npm run build`/`npm run lint` clean after the `.wrap()`
+  fix.
+- Real fix, but not yet re-screenshotted -- the user's original
+  screenshot predates this change; the underlying behavior (Leaflet's
+  `LatLng.wrap()`) is a documented, stable Leaflet API, not new
+  surface area to re-verify from scratch.
