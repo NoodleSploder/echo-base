@@ -429,18 +429,16 @@ Completed
   position per callsign, survives restarts, queryable via
   `GET /api/aprs/stations`) -- the data layer a map needs, plus a
   compact "known stations" strip in the Messaging Center's APRS tab.
-  Still no actual map/tile rendering (see below).
+- Actual map/tile rendering: see **Phase 17 — Geospatial Intelligence**,
+  which absorbs and supersedes this phase's map-rendering "Remaining"
+  items below. The position-*decoding* work above stays credited here;
+  the map/layer implementation itself is tracked in Phase 17.
 
 Remaining
 
-- APRS map (station markers/tile rendering on an actual map -- the
-  station data itself is now persisted and queryable, see above)
-- APRS Mic-E position format (needs real captured packets to verify against, not a from-memory table transcription)
-- ADS-B map
-- AIS map
-- Receiver map
-- Propagation
-- Satellite map
+- APRS Mic-E position format (needs real captured packets to verify
+  against, not a from-memory table transcription)
+- Everything else map-related is now tracked under Phase 17
 
 ---
 
@@ -608,6 +606,167 @@ Remaining
 - WebSocket API
 - Architecture diagrams
 - Developer documentation
+
+---
+
+# Phase 17 — Geospatial Intelligence
+
+A platform capability, not a single map page -- see `ARCHITECTURE.md`'s
+"Geospatial Intelligence Platform" section for the full design (the
+`MapLayer` interface, self-registering layers, provider abstraction,
+tile-provider swapping). This phase absorbs and supersedes Phase 9's
+"Remaining" map-rendering items (the position-*decoding* work Phase 9
+already did -- APRS position parsing/persistence -- stays credited
+there; the actual map/layer implementation is tracked here).
+
+Framework choices: **Leaflet** + free OSM-derived tiles (CartoDB Dark
+Matter by default, standard OSM as an alternative) -- mature, free, no
+vendor lock-in, plugin-rich, works with zero API keys out of the box.
+**satellite.js** (pinned to 6.0.2, the pure-JS release -- see
+`ARCHITECTURE.md` for why 7.x's WASM build doesn't currently bundle
+for the browser) for client-side SGP4/SDP4; the backend only ever
+distributes TLE data, never computes a position itself.
+
+## Interactive Map Engine
+
+Completed
+
+- `GeospatialPage` (`/map`): full-screen Leaflet map, dark theme
+  (CartoDB Dark Matter default), swappable base tile provider, scale
+  control, default Leaflet zoom control, live mouse lat/lon readout,
+  per-layer enable/disable sidebar with a "live" indicator dot for
+  auto-refreshing layers.
+
+Remaining
+
+- Place-name search (a coordinate-jump box would be the minimal first
+  step; full geocoding needs a provider -- Nominatim, OSM's own free
+  option, is the natural candidate, rate-limited but keyless)
+- Provider status/health indicator beyond the per-layer "live" dot
+  (a real health model -- last successful fetch, error state per
+  layer/provider -- once there are enough external providers for it
+  to matter)
+
+## Layer Framework
+
+Completed
+
+- `MapLayer` interface + self-registering `LayerRegistry`
+  (`frontend/src/geo/`) -- the map/page depend only on the interface,
+  never a concrete layer. See `ARCHITECTURE.md` for the full contract.
+
+Remaining
+
+- Nothing concrete -- the framework is considered done until a real
+  new layer's needs prove otherwise (e.g. a shared per-layer health/
+  status model, if enough providers accumulate to need one).
+
+## Satellite Intelligence
+
+Completed
+
+- Ground track + current-position layer (`SatelliteTrackLayer`),
+  computed entirely client-side via `satellite.js` from a TLE fetched
+  through the existing `GET /api/satellites/tle/{norad_id}` (n2yo.com)
+  or pasted manually.
+- (Already built in Phase 9/the Satellites page, reused here rather
+  than duplicated: pass prediction, schedule-recording-for-next-pass.)
+
+Remaining
+
+- Multiple simultaneously-tracked satellites (currently one at a time)
+- CelesTrak as a bulk/alternative TLE source (useful for "show me
+  every Starlink" style layers n2yo's per-satellite lookup doesn't fit
+  well) -- would follow the same provider-adapter shape as
+  `services/n2yo.py`
+- Visual-pass/horizon/Doppler overlays beyond ground track + position
+
+## Space Weather
+
+Remaining (nothing built yet)
+
+- NOAA SWPC provider adapter (Kp index, solar wind, X-ray/proton flux,
+  geomagnetic storms, CME alerts, radio blackouts, HF fadeouts)
+- Aurora oval / probability / forecast overlays
+- Designed to allow additional sources to supplement NOAA later
+  (provider-abstraction shape, not a NOAA-specific integration)
+
+## Weather Layers
+
+Remaining (nothing built yet)
+
+- NEXRAD, GOES imagery, storm polygons, lightning detection
+
+## APRS
+
+Completed
+
+- Station layer (see Layer Framework above), backed by the existing
+  `aprs_stations` persistence layer (Phase 9).
+
+Remaining
+
+- Symbol-accurate map icons (currently a plain circle marker for every
+  station regardless of APRS symbol table/code)
+- Track/breadcrumb history per station (currently last-known-position
+  only, same gap noted in the Phase 9 diary entries)
+
+## ADS-B
+
+Remaining (blocked on position decoding, not the layer framework)
+
+- Aircraft layer needs real lat/lon, which needs CPR (compact position
+  reporting) frame-pairing decoding -- deliberately deferred when the
+  Mode S decoder was built (see the ADS-B diary entry). The framework
+  itself doesn't block this; it's a decoder gap, not a mapping one.
+
+## AIS
+
+Remaining (blocked on position decoding, not the layer framework)
+
+- Same shape of gap as ADS-B: the AIS decoder currently extracts
+  message type + MMSI only, not position (see the AIS diary entry).
+
+## RF Coverage
+
+Remaining (nothing built yet)
+
+- Coverage/propagation modeling per receiver site -- blocked on
+  receivers having a stored site location at all (they don't yet;
+  receiver inventory tracks "seen", not "located").
+
+## Heat Maps
+
+Remaining (nothing built yet)
+
+- Signal-detection-density or occupancy-density overlays -- the
+  underlying data (`signal_detections` table, `OccupancyTracker`)
+  already exists; this is a new layer consuming existing data, not a
+  new backend subsystem.
+
+## Historical Playback
+
+Remaining (nothing built yet)
+
+- Time-scrubbing across persisted history (`signal_detections`,
+  `aprs_stations`, `adsb_aircraft`/`ais_vessels` once those have
+  position) -- a real "historical" layer needs point-in-time queries
+  those tables don't currently expose (they only return current/
+  recent state).
+
+## Alerts
+
+Remaining (nothing built yet)
+
+- Geospatial alerting (e.g. "notify when an APRS station enters a
+  drawn boundary") -- natural fit for `ToastContext`/`EventToastBridge`
+  once there's a geospatial trigger condition to evaluate.
+
+## Mobile Support
+
+Remaining (nothing built yet, and unverifiable in this environment
+regardless -- no browser/mobile device available here; see
+`ARCHITECTURE.md`/known environment blocks).
 
 ---
 

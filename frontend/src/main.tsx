@@ -5,6 +5,7 @@ import { App } from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
+import "leaflet/dist/leaflet.css";
 import "./styles/index.css";
 
 createRoot(document.getElementById("root")!).render(

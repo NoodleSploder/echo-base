@@ -9,7 +9,7 @@ const NAV_ITEMS = [
   { to: "/spectrum", label: "Spectrum", end: false },
   { to: "/digital-modes", label: "Digital Modes", end: false },
   { to: "/messaging", label: "Messaging", end: false },
-  { to: "/map", label: "Map", end: false },
+  { to: "/map", label: "Geospatial", end: false },
   { to: "/satellites", label: "Satellites", end: false },
   { to: "/alerts", label: "Alerts", end: false },
   { to: "/logs", label: "Logs", end: false },

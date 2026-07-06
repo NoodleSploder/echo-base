@@ -605,6 +605,211 @@ No architectural assumptions should limit future horizontal scaling.
 
 ---
 
+# Geospatial Intelligence Platform
+
+A first-class subsystem, not a single map page. The design goal is the
+same one the plugin architecture already applies to receivers/radios/
+decoders: a stable interface that lets new data sources be added
+without touching the map, the page, or any other layer.
+
+## Overall design
+
+```
+                  GeospatialPage (frontend/src/pages/GeospatialPage.tsx)
+                            │
+                     Leaflet L.Map instance
+                            │
+              ┌─────────────┼─────────────┐
+              │             │             │
+        MapLayer      MapLayer      MapLayer  ...  (LayerRegistry)
+      (APRS Stations) (Satellite    (future: AIS,
+                        Ground       ADS-B, RF
+                        Track)       coverage, ...)
+              │             │
+      GET /api/aprs/    satellite.js
+        stations        (client-side SGP4,
+      (existing REST    fed by
+       endpoint,        GET /api/satellites/tle/{norad_id})
+       Phase 9)
+```
+
+The page owns exactly one thing every layer needs: a live `L.Map`
+instance and a place to put a sidebar toggle. It has no knowledge of
+what a layer draws, how often it refreshes, or where its data comes
+from -- that isolation is the entire point, and it's what lets a
+future RF-coverage or AIS layer be added as a new file plus one import
+line, not a change to the map page.
+
+## The `MapLayer` interface
+
+Every layer (`frontend/src/geo/types.ts`) implements:
+
+```typescript
+interface MapLayer {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly defaultEnabled: boolean;
+
+  initialize(map: L.Map): void | Promise<void>;
+  refresh(): void | Promise<void>;
+  enable(): void;
+  disable(): void;
+  destroy(): void;
+}
+```
+
+`initialize` is called once per page load with a live map instance.
+`enable`/`disable` add/remove the layer's Leaflet objects from the map
+without discarding state (toggling a layer off and back on doesn't
+re-fetch). `destroy` is the only place a layer's timers/subscriptions
+actually get torn down, called on unmount.
+
+## Layer registry (self-registering layers)
+
+`frontend/src/geo/LayerRegistry.ts` is a flat list of factory
+functions. A layer module calls `registerLayer(() => new MyLayer())`
+as a side effect of being imported; `frontend/src/geo/layers/index.ts`
+imports every layer module and nothing else. Adding a layer is:
+
+1. Write a class implementing `MapLayer` in `geo/layers/`.
+2. Add one `import "./MyLayer";` line to `geo/layers/index.ts`.
+
+`GeospatialPage` calls `createRegisteredLayers()` once and never
+imports a concrete layer class directly (the one deliberate exception
+is `SatelliteTrackLayer`, whose extra `setSatellite()` method the
+page's satellite-picker control needs -- see "Layer-specific
+extensions" below).
+
+## Provider abstraction (backend)
+
+The frontend never calls an external data provider directly -- every
+external service is isolated behind a backend service module that
+downloads, validates, and normalizes data before it reaches a REST
+endpoint:
+
+- `services/aprs_stations.py` -- not an external provider, but same
+  shape: normalizes decoded `AprsPacket` events into a queryable
+  "last known position per station" table.
+- `services/satellite_passes.py` -- wraps the `sgp4` library (not an
+  external network call; the actual propagation library).
+- `services/n2yo.py` -- the one genuine external-provider adapter so
+  far: isolates n2yo.com's HTTP API (including its own quirks, like
+  returning HTTP 200 with a malformed body for some bad requests)
+  behind a clean `fetch_tle()` call that raises a real `N2yoError`
+  instead of letting a provider-specific failure mode leak upward.
+
+Adding a new external provider (e.g. NOAA SWPC for space weather, or
+CelesTrak as an alternative TLE source alongside n2yo) means adding
+one new service module with the same shape -- fetch, validate,
+normalize, expose via REST -- not changing any existing provider's
+code or any frontend layer that doesn't consume it.
+
+## Orbit calculations happen in the browser, not the backend
+
+`SatelliteTrackLayer` is the one layer whose "provider" is a pure
+computation rather than a fetched dataset: it takes a TLE (fetched via
+`GET /api/satellites/tle/{norad_id}`, or pasted manually on the
+Satellites page) and runs `satellite.js` (SGP4/SDP4) directly in the
+browser to compute current position and a ground track. The backend's
+job stops at distributing TLE data -- it never computes a satellite
+position itself. This keeps the backend's satellite-related surface
+area small (fetch/cache/validate a TLE) and keeps orbit math where
+it's cheapest to run per-client (a ground track redraws every few
+seconds while a pass is being watched; that's client CPU, not a
+server request).
+
+**Dependency note:** `satellite.js` is pinned to `6.0.2` (not the
+latest `7.x`) -- 7.x bundles an optional WebAssembly-accelerated SGP4
+path that Vite/Rollup can't currently bundle for the browser (it pulls
+in Node-only modules and top-level `await` in an IIFE chunk). 6.0.2 is
+the pure-JS implementation with no such build issue, and is more than
+fast enough for one satellite's ground track recomputed every few
+seconds.
+
+## Layer-specific extensions
+
+Not every layer's configuration fits the common interface (there's no
+generic "target" concept every layer shares) -- `SatelliteTrackLayer`
+exposes `setSatellite(name, tleLine1, tleLine2)` and `clearSatellite()`
+beyond `MapLayer`. `GeospatialPage`'s satellite-picker control looks up
+that specific layer instance by `id` and calls the extra method on it,
+typed via the concrete class rather than the interface. This is a
+deliberate, narrow exception: the `MapLayer` interface covers what the
+*map* needs from every layer; a layer's own configuration surface is
+its own business, reached only by code that already knows it's dealing
+with that specific layer (never by the map itself).
+
+## Tile provider abstraction
+
+The base map tiles are also swappable without touching
+`GeospatialPage`: `frontend/src/geo/tileProviders.ts` is a small list
+of `{id, name, url, attribution, maxZoom}` entries. Both current
+entries (CartoDB Dark Matter, standard OpenStreetMap) are free,
+OSM-derived, and need no API key -- a deliberate constraint so the map
+works out of the box with zero configuration. Adding a provider that
+needs a key (a commercial tile host, say) later is one new entry in
+that list.
+
+## Caching and update intervals
+
+Each layer manages its own refresh cadence independently (no shared
+scheduler yet):
+
+- **APRS Stations**: polls `GET /api/aprs/stations` every 15s. The
+  underlying data is already cached server-side (the `aprs_stations`
+  table, upserted on every decoded packet) -- this is a display-refresh
+  interval, not a fetch-from-external-provider interval.
+- **Satellite Ground Track**: recomputes every 5s locally (no network
+  call at all once a TLE has been loaded -- `satellite.js` runs
+  entirely client-side).
+
+Future providers with a real "fetch from the internet periodically"
+shape (NOAA SWPC space weather, CelesTrak bulk TLE catalogs) should
+follow the pattern already established by `HotplugMonitor` and the
+signal-detection pruning task in `main.py`'s lifespan: a background
+`asyncio` task on a configurable interval (see `HotplugSettings`/
+`HistorySettings` in `core/config.py` for the existing shape), writing
+into a local cache table, with REST endpoints serving the cache and
+falling back to the last-known-good data if a provider fetch fails
+rather than erroring the whole endpoint out.
+
+## What's built vs. what the framework merely supports
+
+Two real layers exist today: **APRS Stations** (backed by data this
+project already decodes and persists) and **Satellite Ground Track**
+(backed by TLE data this project already fetches/predicts passes
+from). Every other layer described in `ROADMAP.md`'s Geospatial
+Intelligence phase -- AIS ships, ADS-B aircraft, receiver sites, RF
+coverage/heat maps, space weather, aurora, storm polygons -- is a real
+gap in *data*, not in the layer framework: AIS/ADS-B position decoding
+was deliberately deferred when those decoders were built (see the
+diary), receivers have no stored site location yet, and no space-
+weather/aurora provider adapter has been written. The framework itself
+places no constraint on adding any of them; each is exactly the same
+shape of work as APRS Stations was (a backend data source + a
+`MapLayer` subclass + one import line).
+
+## Future extensibility
+
+Adding a genuinely new layer requires, at most:
+
+1. A backend service/route if the data doesn't already have one
+   (following the provider-abstraction shape above).
+2. A `MapLayer` subclass in `frontend/src/geo/layers/`.
+3. One import line in `geo/layers/index.ts`.
+
+No changes to `GeospatialPage`, `LayerRegistry`, or any other layer.
+The same reasoning extends to swapping the mapping library itself
+(Leaflet was chosen for being free, mature, plugin-rich, and
+OSM-native -- see `ROADMAP.md`'s Geospatial Intelligence phase for the
+full reasoning) -- every layer talks to the map only through the
+`MapLayer` interface's `initialize(map: L.Map)` parameter, so replacing
+Leaflet would mean rewriting layer internals but not the registration/
+toggle/lifecycle model around them.
+
+---
+
 # Future Vision
 
 Echo Base should become the open-source platform for radio operations.

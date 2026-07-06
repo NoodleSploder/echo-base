@@ -4472,3 +4472,100 @@ different claims, not a formality.
   didn't change response parsing, only the request target, so no test
   behavior changed -- the mocks were never exercising the real host to
   begin with).
+
+## Added: Geospatial Intelligence Platform (Phase 17) -- foundation slice
+
+A user-directed initiative, explicitly scoped as "a reusable
+geospatial subsystem other plugins can leverage," not just a map page.
+Reviewed `ARCHITECTURE.md`/`ROADMAP.md`/`README.md` first per the
+brief, then built the framework plus two real layers -- deliberately
+not every layer described in the brief (AIS ships, ADS-B aircraft,
+space weather, RF coverage, heat maps, historical playback are all
+real gaps, most blocked on data this project doesn't have yet, not on
+the framework -- see `ROADMAP.md`'s new Phase 17 for the honest
+Completed/Remaining split per milestone).
+
+**Architectural decisions:**
+
+- **Leaflet + free OSM-derived tiles**, per the brief's own reasoning
+  (free, mature, plugin-rich, no vendor lock-in, dark-mode friendly).
+  Default tiles are CartoDB Dark Matter (still OSM data, just a dark
+  colorway, no API key) with standard OSM as a one-click alternative --
+  both entries in a small `tileProviders.ts` list, so adding a
+  key-gated commercial provider later is one new entry, not a
+  rewrite.
+- **`MapLayer` interface + self-registering `LayerRegistry`**, matching
+  the brief's example shape almost exactly
+  (`initialize/refresh/enable/disable/destroy`). A layer module calls
+  `registerLayer(() => new MyLayer())` at import time;
+  `geo/layers/index.ts` just imports every layer module. Adding a
+  layer never touches `GeospatialPage`.
+- **satellite.js for client-side SGP4**, per the brief ("orbit
+  calculations belong in the browser whenever practical" -- the
+  backend already only distributes TLE data via
+  `GET /api/satellites/tle/{norad_id}`, built in an earlier session).
+  Pinned to **6.0.2**, not the latest 7.x: 7.x bundles an optional
+  WASM-accelerated path that Vite/Rollup can't currently bundle for
+  the browser (Node-only modules + top-level `await` in an IIFE
+  chunk) -- caught by an actual failed `npm run build`, not by
+  reading changelogs. 6.0.2 is the pure-JS release with no such
+  issue and is plenty fast for one satellite's ground track redrawn
+  every few seconds.
+- **Provider abstraction reused, not reinvented**: `services/n2yo.py`
+  (built last session) already *is* the "isolate an external provider
+  behind an adapter" pattern the brief asks for; this slice didn't
+  need a new one since the only real external-data layer built now
+  (satellite tracking) already had it. NOAA SWPC (space weather) would
+  be the next thing to actually need a brand-new adapter, and would
+  follow the exact same shape.
+
+**Files added:**
+
+- `frontend/src/geo/types.ts` (the `MapLayer` interface)
+- `frontend/src/geo/LayerRegistry.ts`
+- `frontend/src/geo/tileProviders.ts`
+- `frontend/src/geo/layers/AprsStationsLayer.ts` (real data:
+  `GET /api/aprs/stations`)
+- `frontend/src/geo/layers/SatelliteTrackLayer.ts` (client-side SGP4,
+  exposes `setSatellite()`/`clearSatellite()` beyond the common
+  interface -- a deliberate, narrow exception documented in
+  `ARCHITECTURE.md`)
+- `frontend/src/geo/layers/index.ts`
+- `frontend/src/pages/GeospatialPage.tsx` (full-screen map, dark
+  theme, layer sidebar with a live-refresh indicator dot, tile
+  provider switcher, mouse lat/lon readout, scale control, satellite
+  NORAD-ID picker wired to `SatelliteTrackLayer`)
+- `frontend/package.json`: `leaflet` (+`@types/leaflet`),
+  `satellite.js@6.0.2`
+- `/map` route now renders `GeospatialPage` instead of the old
+  `ComingSoonPage` stub; nav label changed from "Map" to "Geospatial".
+
+## Verification
+
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean -- **after** fixing the satellite.js
+  7.x build failure by pinning to 6.0.2 (the build genuinely failed
+  first, confirming this wasn't a hypothetical compatibility concern).
+- **Real data, live backend**: confirmed `GET /api/aprs/stations`
+  (what `AprsStationsLayer` actually calls) responds correctly against
+  the running backend -- currently an empty list, consistent with no
+  real APRS station decoded yet in this environment (same honest gap
+  as every other real-traffic entry in this diary). The layer code
+  handles an empty response correctly (clears markers, no error).
+- Could not visually verify the map renders/interacts correctly --
+  no browser in this environment, same limitation as every other
+  frontend-only entry in this diary. This is a materially bigger risk
+  than usual for a frontend-only change given how much new surface
+  area (Leaflet lifecycle, layer toggle state, tile switching) this
+  slice adds -- flagged explicitly rather than glossed over.
+
+## Next Steps
+
+1. NOAA SWPC space weather adapter -- the next layer that actually
+   needs a new provider-abstraction module, not just a new `MapLayer`.
+2. Receiver site locations (lat/lon on a receiver profile/inventory
+   row) -- unlocks a real "Receiver Sites" layer.
+3. AIS/ADS-B position decoding -- unlocks real ship/aircraft layers;
+   currently blocked on decoder work, not the map framework.
+4. Same environment blocks as ever (no browser for visual
+   verification, no confirmed real APRS/AIS/ADS-B traffic in range).

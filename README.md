@@ -184,17 +184,28 @@ Replay any captured transmission through the web interface.
 
 ---
 
-## Maps
+## Geospatial Intelligence
 
-Integrated mapping for:
+A dedicated platform capability (see `ARCHITECTURE.md`), not a single
+map page: a Leaflet-based map with a plugin-style layer framework
+(`MapLayer` interface, self-registering layers) so new data sources
+can be added without changing the map itself.
 
-- APRS stations
-- Aircraft
-- Marine traffic
-- Weather
+Built today:
+
+- APRS stations (real decoded positions)
+- Satellite ground track + current position (client-side SGP4 via
+  `satellite.js`, fed by a TLE from n2yo.com or pasted manually)
+
+Layers the framework supports but don't have real position data behind
+them yet (see `ROADMAP.md`'s Phase 17 for specifics):
+
+- Aircraft (ADS-B)
+- Marine traffic (AIS)
+- Weather / space weather
 - Receiver locations
-- Propagation
-- Signal reports
+- Propagation / RF coverage
+- Signal reports (heat maps)
 
 ---
 
