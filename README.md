@@ -1,4 +1,3 @@
-````markdown
 # Echo Base
 
 > **An Open-Source Radio Operations Platform**
