@@ -67,7 +67,7 @@ Long-term goals include:
 These aren't abandoned -- they're blocked on resources this development environment doesn't currently have. Revisit when the resource becomes available; see `DEVELOPMENT_DIARY.md` for the entries where each was hit.
 
 - **Phase 3 (Radio Management / Hamlib).** No serial/CAT-capable transceiver is attached here (checked: no `/dev/ttyUSB*`/`/dev/ttyACM*`, no `rigctl`/`rigctld` installed). Every feature built so far has been verified against real attached hardware (an RTL-SDR receive-only dongle); starting Radio Manager without a real rig to test against would break that pattern. Needs: a CAT-capable transceiver (or a rigctld-compatible simulator) connected to whatever machine is doing the work.
-- **Real over-the-air decoder verification (APRS, SAME, ADS-B).** All three decoders are proven correct via synthetic encode/decode round-trip tests, but have not decoded a single real over-the-air message -- there's no guarantee of an active APRS station, NOAA Weather Radio transmitter, or aircraft in range of whatever antenna is attached here. ADS-B specifically also hit a real capture-thread stall while investigating this: `GET .../capture-health` reports `alive: true` (the rtl_sdr subprocess is genuinely running, confirmed via `ps`) but `read_count` never advances past 0, reproducing identically at the default 240kHz/spectrum-oriented sample rate with no decoder enabled at all -- i.e. a pre-existing capture-pipeline issue in this environment, not something introduced by the CPR decode work, and not specific to 1090MHz/2.4Msps. Needs: real RF activity in range, or a known-good test transmission, *and* whatever's causing the capture thread to stop reading investigated separately.
+- **Real over-the-air decoder verification (APRS, SAME, ADS-B) -- root cause found, fix needs root.** All three decoders are proven correct via synthetic encode/decode round-trip tests, but none has decoded a single real over-the-air message. Investigating this while building ADS-B CPR decoding turned up a specific, confirmed root cause rather than just "no antenna activity": `GET .../capture-health` reports `alive: true` (the `rtl_sdr` subprocess is genuinely running, confirmed via `ps`) but `read_count` never advances past 0 -- reproduces identically at the default 240kHz/spectrum-oriented rate with no decoder enabled, and reproduces even calling the real `rtl_sdr` CLI binary directly (bypassing this project's code entirely): a 3-8 second direct capture to a file produces a 0-byte file, and `rtl_test`/`rtl_sdr` both print `[R82XX] PLL not locked!`. `cat /sys/module/usbcore/parameters/usbfs_memory_mb` is `16` -- the well-known too-small default (Linux's default USB-FS memory pool is far smaller than what libusb's async bulk-transfer buffers for RTL-SDR need at any real sample rate) that causes exactly this "device opens fine, tuner reports PLL not locked, zero bytes ever arrive" failure mode across the whole RTL-SDR ecosystem, not something specific to this project. Raising it (`echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`, or a persistent `usbcore.usbfs_memory_mb=256` kernel boot parameter) needs root, which isn't available non-interactively in this environment (`sudo` prompts for a password with no TTY). Needs: root access to raise `usbfs_memory_mb` once, or an environment where it's already raised.
 - **Browser-based UI/UX verification.** No display or headless browser is available in this environment, so frontend work (including the entire draggable dashboard grid and all "Listen"/level-meter/squelch UI) is verified via `tsc`/`eslint`/build success and code review, not by looking at or listening to it. Needs: a display or headless browser (e.g. Playwright) available to the development environment.
 
 ---
@@ -769,11 +769,10 @@ Completed
 
 Remaining
 
-- Real over-the-air verification: attempted against the real attached
-  RTL-SDR, but hit a capture-thread stall unrelated to this feature
-  (see "Known Environment Blocks" near the top of this file) -- the
-  decode itself is verified via synthetic waveforms, not live 1090MHz
-  traffic.
+- Real over-the-air verification: blocked on `usbfs_memory_mb=16`
+  (see "Known Environment Blocks" near the top of this file for the
+  confirmed root cause) rather than this feature -- the decode itself
+  is verified via synthetic waveforms, not live 1090MHz traffic.
 - Surface position (TC 5-8) and callsign/identification (BDS 2,0)
   messages remain undecoded.
 

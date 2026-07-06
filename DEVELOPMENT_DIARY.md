@@ -4972,3 +4972,68 @@ over by claiming false verification.
    smaller follow-ups, not full gaps).
 3. RF Coverage propagation modeling, CME alerts/radio blackouts/HF
    fadeouts remain unbuilt.
+
+## Investigated: the capture-thread stall -- root cause found
+
+Followed up on the capture-thread stall noted in the ADS-B diary
+entry, since it blocks live verification of every RF decoder in this
+project (APRS, SAME, ADS-B alike), not just the newest one.
+
+**Investigation path**: `GET .../capture-health` consistently showed
+`alive: true` (the worker thread genuinely running, `ps` confirmed its
+PPID was the real uvicorn process, not a leftover from manual testing)
+but `read_count` stuck at 0 indefinitely, reproducing at the plain
+default 240kHz rate with no decoder enabled at all -- ruling out
+anything about the ADS-B/CPR work specifically. Went one level lower:
+called the real `rtl_sdr` CLI binary directly, bypassing this
+project's Python entirely, capturing straight to a file for 3-8
+seconds. Result: a 0-byte file, with `[R82XX] PLL not locked!` printed
+by both `rtl_sdr` and `rtl_test`. That ruled out this project's code
+as the cause -- the standard upstream tool exhibits the identical
+symptom on its own.
+
+**Root cause**: `cat /sys/module/usbcore/parameters/usbfs_memory_mb`
+-> `16`. This is a well-known RTL-SDR gotcha across the whole
+ecosystem (dump1090, GQRX, SDR# guides all call it out): Linux's
+default USB-FS memory pool is far smaller than what libusb's async
+bulk-transfer buffers for RTL-SDR need at essentially any real sample
+rate, and the failure mode is exactly this -- device opens, tuner
+reports a PLL lock warning, and zero bytes ever actually arrive over
+USB. The fix is a one-line `echo 256 | sudo tee
+/sys/module/usbcore/parameters/usbfs_memory_mb` (or a persistent
+`usbcore.usbfs_memory_mb=256` kernel boot parameter) -- but `sudo` in
+this environment prompts for a password with no TTY available
+non-interactively, so it can't be applied from here.
+
+**A live subscriber, discovered mid-investigation**: while checking
+capture-health, found `spectrum_subscribers: 1` on the real receiver
+-- someone (possibly the actual user, via the dashboard) already had
+a live spectrum view open, independently hitting the exact same
+zero-bytes symptom. Confirms this isn't a synthetic edge case; it's
+actively affecting real usage right now. Stopped running manual
+`rtl_sdr` CLI tests immediately once this was noticed, to avoid
+contending for the device with a real session -- the `ads-b/stop` and
+`stop` calls issued moments earlier didn't disrupt it (per the
+existing "state is a manual flag, not the actual capture" design,
+documented in `stream_service.py`'s `_status_response` docstring --
+`/stop` doesn't tear down a capture a live subscriber still depends
+on).
+
+Logged the precise root cause and fix in `ROADMAP.md`'s Known
+Environment Blocks (previously just noted "a capture-thread stall,"
+now names the exact `sysfs` parameter, its current value, the fix
+command, and why it can't be applied here) so a future session with
+root access can resolve it in one command instead of re-diagnosing
+from scratch.
+
+## Next Steps
+
+1. If root access ever becomes available in this environment: `echo
+   256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`,
+   then retry APRS/SAME/ADS-B against real over-the-air traffic --
+   all three decoders are already proven correct via synthetic tests
+   and are just waiting on real bytes to arrive.
+2. AIS position decoding remains the last "position decoding
+   deferred" gap.
+3. RF Coverage propagation modeling, CME alerts/radio blackouts/HF
+   fadeouts remain unbuilt.
