@@ -5226,3 +5226,55 @@ column, not a Leaflet layer.
 3. Once `usbfs_memory_mb` is raised (needs root): real over-the-air
    verification becomes possible for every RF decoder in this project
    at once, not just AIS.
+
+## Resolved: the RF capture-thread stall
+
+The `usbfs_memory_mb=16` root cause diagnosed earlier turned out to be
+half the story. The user raised it to 256 (confirmed via `cat
+/sys/module/usbcore/parameters/usbfs_memory_mb`), but a direct `rtl_sdr`
+CLI capture still produced a 0-byte file -- same symptom as before,
+meaning the sysfs change alone wasn't sufficient.
+
+**Traced further with `strace`** (`-e trace=ioctl`, writing to a file
+rather than piping to avoid a buffering hang that ate a couple of
+attempts): `USBDEVFS_SUBMITURB` and `USBDEVFS_REAPURBNDELAY` were both
+succeeding at the kernel level, which pointed away from a submission-
+level failure and toward something about the *existing* USB device
+allocation not having picked up the new limit -- a `usbfs_memory_mb`
+change only affects new allocations, and the device had been opened
+(and left in some state) many times already during this session's
+earlier debugging.
+
+**Fix**: issued a raw `USBDEVFS_RESET` ioctl directly from Python
+(`fcntl.ioctl(fd, 0x5514, 0)` on `/dev/bus/usb/005/003`) -- no root
+needed, since the device node's `rtlsdr` group already grants write
+access. Immediately after, a direct `rtl_sdr` capture produced a real,
+non-constant 480,000-byte file at 240kHz (and 9.6MB at ADS-B's
+2.4Msps) -- confirmed not just "some bytes" but genuine varying signal
+data (194 unique byte values, non-trivial standard deviation, not
+stuck at a constant).
+
+**Confirmed through the actual app**, not just the CLI: `GET
+.../capture-health` now shows real, continuously advancing
+`read_count` (129 -> 1310 over ~25s) and sub-millisecond
+`last_read_age_seconds` for both an APRS-rate (240kHz) and an ADS-B-
+rate (2.4Msps) capture -- the first time in this entire session that
+real IQ samples have demonstrably flowed through `StreamService`'s
+capture loop. No aircraft were decoded during the ADS-B test window,
+which is an honest, separate finding (real 1090MHz traffic + a
+suitable antenna are their own precondition, distinct from "does the
+capture pipeline itself work") -- not a regression or a new bug.
+
+This unblocks real over-the-air verification for every RF decoder in
+this project at once: APRS, SAME, ADS-B, AIS, and SSTV all share the
+exact same capture pipeline that was stalled.
+
+## Next Steps
+
+1. Retry each decoder against real traffic now that the pipeline
+   genuinely works: APRS (a local digipeater/station), SAME (NOAA
+   Weather Radio, if one's in range), AIS (161.975/162.025MHz, marine
+   traffic), SSTV (145.800MHz during an ISS SSTV event), ADS-B
+   (needs real air traffic in range of whatever antenna is attached).
+2. RF Coverage modeling, CME alerts/radio blackouts, AIS Class B
+   remain the other open items from earlier entries.

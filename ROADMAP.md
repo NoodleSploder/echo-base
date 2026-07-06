@@ -67,8 +67,9 @@ Long-term goals include:
 These aren't abandoned -- they're blocked on resources this development environment doesn't currently have. Revisit when the resource becomes available; see `DEVELOPMENT_DIARY.md` for the entries where each was hit.
 
 - **Phase 3 (Radio Management / Hamlib).** No serial/CAT-capable transceiver is attached here (checked: no `/dev/ttyUSB*`/`/dev/ttyACM*`, no `rigctl`/`rigctld` installed). Every feature built so far has been verified against real attached hardware (an RTL-SDR receive-only dongle); starting Radio Manager without a real rig to test against would break that pattern. Needs: a CAT-capable transceiver (or a rigctld-compatible simulator) connected to whatever machine is doing the work.
-- **Real over-the-air decoder verification (APRS, SAME, ADS-B) -- root cause found, fix needs root.** All three decoders are proven correct via synthetic encode/decode round-trip tests, but none has decoded a single real over-the-air message. Investigating this while building ADS-B CPR decoding turned up a specific, confirmed root cause rather than just "no antenna activity": `GET .../capture-health` reports `alive: true` (the `rtl_sdr` subprocess is genuinely running, confirmed via `ps`) but `read_count` never advances past 0 -- reproduces identically at the default 240kHz/spectrum-oriented rate with no decoder enabled, and reproduces even calling the real `rtl_sdr` CLI binary directly (bypassing this project's code entirely): a 3-8 second direct capture to a file produces a 0-byte file, and `rtl_test`/`rtl_sdr` both print `[R82XX] PLL not locked!`. `cat /sys/module/usbcore/parameters/usbfs_memory_mb` is `16` -- the well-known too-small default (Linux's default USB-FS memory pool is far smaller than what libusb's async bulk-transfer buffers for RTL-SDR need at any real sample rate) that causes exactly this "device opens fine, tuner reports PLL not locked, zero bytes ever arrive" failure mode across the whole RTL-SDR ecosystem, not something specific to this project. Raising it (`echo 256 | sudo tee /sys/module/usbcore/parameters/usbfs_memory_mb`, or a persistent `usbcore.usbfs_memory_mb=256` kernel boot parameter) needs root, which isn't available non-interactively in this environment (`sudo` prompts for a password with no TTY). Needs: root access to raise `usbfs_memory_mb` once, or an environment where it's already raised.
 - **Browser-based UI/UX verification.** No display or headless browser is available in this environment, so frontend work (including the entire draggable dashboard grid and all "Listen"/level-meter/squelch UI) is verified via `tsc`/`eslint`/build success and code review, not by looking at or listening to it. Needs: a display or headless browser (e.g. Playwright) available to the development environment.
+
+**Resolved**: the RF capture-thread stall (`read_count` stuck at 0 despite `alive: true`) that previously blocked all real over-the-air verification. `usbfs_memory_mb` was raised to 256 (was 16), *and* that alone wasn't sufficient -- the device also needed a `USBDEVFS_RESET` (issued via a raw ioctl on `/dev/bus/usb/005/003`, no root needed since group `rtlsdr` already grants write access to the device node) to actually pick up the new limit for its existing USB allocation. Confirmed fixed via the real `rtl_sdr` CLI directly (480KB/9.6MB captured cleanly at 240kHz/2.4Msps, verified non-constant real signal data) and through the actual app (`capture-health` showing real, advancing `read_count` and sub-second `last_read_age_seconds` for both APRS-rate and ADS-B-rate captures). See the diary entry for the full diagnosis.
 
 ---
 
@@ -321,13 +322,13 @@ Completed
   has decoded so far -- including mid-transmission -- so the frontend
   (`ReceiverCard`'s "Decode SSTV" toggle) shows a picture literally
   drawing itself in, line by line, live.
-- Real over-the-air verification is blocked by the same
-  `usbfs_memory_mb` capture-thread stall documented in "Known
-  Environment Blocks" (affects every RF decoder in this project
-  equally, not something specific to SSTV) -- the decode pipeline
-  itself is verified end-to-end via the REST test suite (using the
-  mock receiver plugin to produce real IQ samples deterministically)
-  and the synthetic-waveform unit tests.
+- Real over-the-air verification was blocked by the `usbfs_memory_mb`
+  capture-thread stall (now resolved -- see "Known Environment
+  Blocks") at the time this was built; not yet re-attempted against
+  real SSTV traffic. The decode pipeline itself is verified end-to-end
+  via the REST test suite (using the mock receiver plugin to produce
+  real IQ samples deterministically) and the synthetic-waveform unit
+  tests.
 
 Remaining
 
@@ -796,10 +797,13 @@ Completed
 
 Remaining
 
-- Real over-the-air verification: blocked on `usbfs_memory_mb=16`
-  (see "Known Environment Blocks" near the top of this file for the
-  confirmed root cause) rather than this feature -- the decode itself
-  is verified via synthetic waveforms, not live 1090MHz traffic.
+- Real over-the-air verification: the `usbfs_memory_mb` capture-thread
+  stall that previously blocked this is now resolved (see "Known
+  Environment Blocks"); confirmed real, steady IQ reads flowing at
+  ADS-B's 2.4Msps rate through the actual app, but no real aircraft
+  decoded yet in this environment (needs real 1090MHz traffic in
+  range and a suitable antenna, which is a separate question from the
+  capture pipeline itself working).
 - Surface position (TC 5-8) and callsign/identification (BDS 2,0)
   messages remain undecoded.
 
