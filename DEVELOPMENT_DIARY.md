@@ -2705,3 +2705,135 @@ new API, just a UI element.
    environment -- overdue across many entries now, the single most
    repeated outstanding item in this diary.
 3. Consider scheduled/triggered recording if recording usage grows.
+
+---
+
+# 2026-07-06 — APRS Position Parsing (Phase 9, Partial)
+
+## Summary
+
+Started Phase 9 (Mapping) from its most concrete angle: extracting
+latitude/longitude from decoded APRS packets. `parse_aprs_position`
+handles the "uncompressed" APRS position report format
+(APRS101.pdf ch. 8); `StreamService._decode_aprs` now adds
+`latitude`/`longitude`/`symbol` to `AprsPacket` events when a packet's
+info field parses as one. `MessagingCenterWidget`'s APRS tab shows
+coordinates alongside the message text when present. No map
+rendering yet -- this is the data-extraction half of "APRS map," not
+the map itself, and the diary/ROADMAP say so explicitly rather than
+overclaiming the phase.
+
+## Motivation
+
+Phase 9's ROADMAP list starts with "APRS map," and the APRS decoder
+already existed from two sessions ago -- but it only ever surfaced the
+raw info-field text, never touched the position data most real APRS
+traffic exists to carry. Parsing lat/lon is the part of "map" that's
+actually about the protocol (and therefore testable/verifiable without
+a browser); rendering pins on a map view is UI work that would join
+the growing pile of frontend features blocked on no browser access in
+this environment. Doing the verifiable half now, flagging the rest
+honestly, seemed better than either skipping it or overclaiming it.
+
+## Features Added
+
+- `app/services/decoders/aprs_position.py` (`parse_aprs_position`,
+  `AprsPosition`): parses APRS's uncompressed position format --
+  `!`/`=`/`/`/`@` + optional 7-char timestamp + 8-char latitude +
+  symbol table ID + 9-char longitude + symbol code + comment --
+  returning decimal-degree lat/lon, the symbol, and the comment.
+  Explicitly does not attempt the compressed (base-91) or Mic-E
+  (position-in-destination-callsign) formats -- both real and common
+  in modern APRS traffic, but structurally different enough to be
+  their own follow-up.
+- `StreamService._decode_aprs`: adds `latitude`/`longitude`/`symbol`
+  to the emitted `AprsPacket` event's data whenever
+  `parse_aprs_position` succeeds; omitted entirely (not `null`) when a
+  packet isn't a position report, so consumers can just check for the
+  key's presence.
+- `MessagingCenterWidget`: shows `lat, lon` (4 decimal places) next to
+  the message text for APRS packets that carry a position.
+
+## Architecture Decisions
+
+- **Only the uncompressed position format is supported, and the
+  limitation is stated in the docstring and this entry, not left
+  implicit.** Mic-E is actually the more common format on real VHF
+  APRS trackers today; supporting only uncompressed means this feature
+  will show positions for some real traffic and silently show none for
+  the rest. That's an honest, scoped v1 rather than pretending "APRS
+  position parsing" is done when only a third of the format space is.
+- **Position fields are omitted from the event data rather than sent
+  as `null` for non-position packets.** Keeps `AprsPacket` payloads
+  smaller for the common non-position case (status messages,
+  messages-to-other-stations, telemetry) and lets the frontend check
+  `typeof data.latitude === "number"` as a single presence+type test.
+- **No map rendering added.** A real map view (station markers,
+  zoom/pan, tile imagery) is meaningfully more UI work than a
+  coordinates readout, and -- like every other frontend feature this
+  session -- couldn't be visually verified in this environment anyway.
+  Building it now would mean shipping unverified UI on top of already
+  -unverified UI; extracting and displaying the raw coordinates first
+  is the smaller, checkable step.
+
+## Files Created / Modified
+
+- `backend/app/services/decoders/aprs_position.py` (new)
+- `backend/app/services/stream_service.py` -- `_decode_aprs` enrichment.
+- `backend/tests/test_aprs_position.py` (new) -- the canonical
+  APRS101.pdf worked example, a timestamped variant, hemisphere sign
+  checks, and malformed/non-position/empty-input rejection.
+- `backend/tests/test_stream_service.py` -- two new `_decode_aprs`
+  tests: a real AX.25 UI frame (built with the same test-only encoder
+  helper `test_afsk_decoder.py` uses) carrying a position report
+  produces an event with correct lat/lon/symbol; one carrying a
+  non-position status message produces an event with no `latitude` key
+  at all.
+- `frontend/src/components/dashboard/MessagingCenterWidget.tsx` --
+  shows coordinates when present.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 63/63 passing (55
+  previous + 6 new `test_aprs_position.py` cases + 2 new
+  `_decode_aprs` enrichment tests, one of which builds and FCS-verifies
+  a *real* AX.25 frame rather than mocking the decoder's output, so the
+  full path from raw frame bytes through `parse_ax25_frame` to
+  position enrichment is exercised).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, tuned to 144.390 MHz,
+  enabled APRS decoding (now running the new position-parsing code
+  path on every decoded packet), listened 20 seconds on `/ws/events`.
+  Zero packets, as in every previous live APRS attempt in this
+  environment -- expected, not a regression. Confirmed no exceptions
+  in the backend log and clean `rtl_sdr` process start/stop, i.e. the
+  new code path doesn't crash live, even though it couldn't be
+  exercised with a real position packet.
+- The actual position-math correctness is proven by
+  `test_aprs_position.py`'s use of the APRS spec's own worked example
+  (`!4903.50N/07201.75W-Test 001234` -> 49.05833, -72.02917), not by
+  live reception.
+
+## Outstanding Work
+
+- Compressed and Mic-E position formats are unsupported -- Mic-E in
+  particular is common on real hardware APRS trackers, so real-world
+  position coverage is partial even once real traffic is received.
+- No map view -- coordinates are shown as text, not plotted.
+- Never verified against real over-the-air position data, same as
+  every APRS/SAME verification since those decoders were built.
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps, tracked in `ROADMAP.md`.
+
+## Next Steps
+
+1. Consider Mic-E position decoding, since it's the more common format
+   on real trackers -- non-trivial (position encoded in the
+   destination callsign field with its own table-driven encoding), a
+   separate piece of work from this entry's uncompressed-format parser.
+2. Add an actual map view once real coordinates exist to plot and a
+   browser is available to verify rendering.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.

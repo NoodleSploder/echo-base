@@ -33,6 +33,7 @@ import numpy as np
 from app.core.events import EventBus
 from app.plugins.receiver import IqStreamHandle
 from app.services.decoders.afsk import Afsk1200Decoder
+from app.services.decoders.aprs_position import parse_aprs_position
 from app.services.decoders.ax25 import format_callsign, format_path, parse_ax25_frame
 from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
@@ -225,16 +226,22 @@ class _ReceiverCapture:
             frame = parse_ax25_frame(raw_frame)
             if frame is None:
                 continue  # bad FCS -- a wrong bit-sync phase guess, not a real packet
-            self._event_bus.emit(
-                "AprsPacket",
-                source=self.receiver_id,
-                data={
-                    "source": format_callsign(frame.source),
-                    "destination": format_callsign(frame.destination),
-                    "path": format_path(frame),
-                    "info": frame.info.decode("ascii", errors="replace"),
-                },
-            )
+            position = parse_aprs_position(frame.info)
+            data = {
+                "source": format_callsign(frame.source),
+                "destination": format_callsign(frame.destination),
+                "path": format_path(frame),
+                "info": frame.info.decode("ascii", errors="replace"),
+            }
+            if position is not None:
+                # Only the "uncompressed" position format is parsed (see
+                # decoders/aprs_position.py) -- compressed and Mic-E
+                # position reports are common in real traffic but not
+                # decoded yet, so most real packets won't carry these.
+                data["latitude"] = position.latitude
+                data["longitude"] = position.longitude
+                data["symbol"] = f"{position.symbol_table}{position.symbol_code}"
+            self._event_bus.emit("AprsPacket", source=self.receiver_id, data=data)
 
     def _decode_same(self, complex_samples: np.ndarray, decimation: int) -> None:
         if self._same_decoder is None:

@@ -182,6 +182,79 @@ async def test_same_alert_event_includes_human_readable_fields():
     assert data["location_names"] == ["County 037, California"]
 
 
+def _build_ax25_ui_frame(dest: str, src: str, info: bytes) -> bytes:
+    from app.services.decoders.ax25 import compute_fcs
+
+    def encode_address(callsign: str, is_last: bool) -> bytes:
+        padded = callsign.upper().ljust(6)[:6]
+        address = bytearray(ord(c) << 1 for c in padded)
+        address.append(0x60 | (0x01 if is_last else 0))
+        return bytes(address)
+
+    payload = bytearray()
+    payload += encode_address(dest, is_last=False)
+    payload += encode_address(src, is_last=True)
+    payload.append(0x03)  # UI frame control
+    payload.append(0xF0)  # no layer-3 protocol
+    payload += info
+    fcs = compute_fcs(bytes(payload))
+    payload.append(fcs & 0xFF)
+    payload.append((fcs >> 8) & 0xFF)
+    return bytes(payload)
+
+
+async def test_aprs_packet_event_includes_position_when_present():
+    """Exercises _decode_aprs directly with a stub decoder returning a
+    real AX.25 frame carrying an APRS position report, bypassing the
+    AFSK demod itself (already covered by test_afsk_decoder.py's round
+    trip) to check the emitted event's lat/lon enrichment end to end."""
+    frame_bytes = _build_ax25_ui_frame("APRS", "N0CALL", b"!4903.50N/07201.75W-Test 001234")
+
+    class _StubDecoder:
+        def feed(self, audio):
+            return [frame_bytes]
+
+    emitted = []
+
+    class _StubEventBus:
+        def emit(self, event_type, source, data):
+            emitted.append((event_type, source, data))
+
+    capture = _ReceiverCapture("test:0", open_handle=None, loop=None, event_bus=_StubEventBus())
+    capture._aprs_decoder = _StubDecoder()
+
+    capture._decode_aprs(np.zeros(10, dtype=np.complex64), decimation=5)
+
+    assert len(emitted) == 1
+    event_type, source, data = emitted[0]
+    assert event_type == "AprsPacket"
+    assert data["latitude"] == pytest.approx(49.05833, abs=1e-4)
+    assert data["longitude"] == pytest.approx(-72.02917, abs=1e-4)
+    assert data["symbol"] == "/-"
+
+
+async def test_aprs_packet_event_omits_position_for_non_position_info():
+    frame_bytes = _build_ax25_ui_frame("APRS", "N0CALL", b">Just a status message")
+
+    class _StubDecoder:
+        def feed(self, audio):
+            return [frame_bytes]
+
+    emitted = []
+
+    class _StubEventBus:
+        def emit(self, event_type, source, data):
+            emitted.append((event_type, source, data))
+
+    capture = _ReceiverCapture("test:0", open_handle=None, loop=None, event_bus=_StubEventBus())
+    capture._aprs_decoder = _StubDecoder()
+
+    capture._decode_aprs(np.zeros(10, dtype=np.complex64), decimation=5)
+
+    assert len(emitted) == 1
+    assert "latitude" not in emitted[0][2]
+
+
 async def test_aprs_and_same_share_one_capture(client):
     stream_service = app.state.stream_service
 

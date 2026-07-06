@@ -332,9 +332,17 @@ Remaining
 
 # Phase 9 — Mapping
 
+Completed
+
+- APRS position parsing (uncompressed format only -- lat/lon/symbol
+  extracted from decoded APRS packets and surfaced in the dashboard).
+  Compressed and Mic-E position formats are not yet decoded; no map
+  view exists yet, only a coordinates readout.
+
 Remaining
 
-- APRS map
+- APRS map (station markers/tile rendering; position parsing itself is done, see above)
+- APRS Mic-E and compressed position formats
 - ADS-B map
 - AIS map
 - Receiver map

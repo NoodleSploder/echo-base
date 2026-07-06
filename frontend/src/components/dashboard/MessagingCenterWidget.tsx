@@ -37,17 +37,27 @@ export function MessagingCenterWidget() {
 
       <div className="mb-2 flex-1 space-y-1 overflow-auto text-xs">
         {activeTab === "APRS" && aprsPackets.length > 0
-          ? aprsPackets.map((event) => (
-              <div key={event.id} className="flex gap-2">
-                <span className="shrink-0 text-slate-500">
-                  {new Date(event.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="shrink-0 font-medium text-accent-400">
-                  {String(event.data.source ?? "?")}
-                </span>
-                <span className="truncate text-slate-300">{String(event.data.info ?? "")}</span>
-              </div>
-            ))
+          ? aprsPackets.map((event) => {
+              const latitude = event.data.latitude;
+              const longitude = event.data.longitude;
+              const hasPosition = typeof latitude === "number" && typeof longitude === "number";
+              return (
+                <div key={event.id} className="flex gap-2">
+                  <span className="shrink-0 text-slate-500">
+                    {new Date(event.timestamp).toLocaleTimeString()}
+                  </span>
+                  <span className="shrink-0 font-medium text-accent-400">
+                    {String(event.data.source ?? "?")}
+                  </span>
+                  <span className="truncate text-slate-300">{String(event.data.info ?? "")}</span>
+                  {hasPosition && (
+                    <span className="shrink-0 font-mono text-slate-500">
+                      {latitude.toFixed(4)}, {longitude.toFixed(4)}
+                    </span>
+                  )}
+                </div>
+              );
+            })
           : SAMPLE_APRS_MESSAGES.map((message, index) => (
               <div key={index} className="flex gap-2">
                 <span className="shrink-0 text-slate-500">{message.time}</span>
