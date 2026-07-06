@@ -3680,3 +3680,57 @@ than growing forever in a long-running deployment.
    though the `minutes` query filter already hides them from the
    Messaging Center's "known stations" strip by default).
 2. Same environment blocks as ever.
+
+## Added: Triggered recording (Phase 8)
+
+Closes the "Triggered recording" item from Phase 8's Remaining list --
+scoped down to reuse two things that already exist rather than
+inventing new plumbing: `SignalDetected` events (already emitted once
+signal detection is enabled with a `margin_db`) as the trigger source,
+and `RecordingService.start`/`stop` as the recording mechanism.
+
+- `services/triggered_recording.py`: `TriggeredRecordingService` --
+  `enable(receiver_id, mode, duration_seconds)` arms it,
+  `handle_signal_detected` (a single EventBus subscriber, wired in
+  `main.py` next to `persist_signal_detected`) starts a recording the
+  first time a detection lands for an armed receiver that isn't
+  already recording, then auto-stops it after `duration_seconds` via
+  a per-receiver `asyncio.create_task`. Deliberately doesn't
+  re-arm/extend an in-progress triggered recording on further
+  detections during its own window -- a burst of detections (the
+  common case: one real signal crossing several FFT frames) would
+  otherwise never let it stop; one recording per trigger, capped at
+  `duration_seconds`, is the simple version.
+- `POST/POST /api/receivers/{id}/triggered-recording/start|stop`.
+  Arming with signal detection not yet enabled is not an error --
+  the two are independently toggled and can be turned on in either
+  order, the trigger just never fires until both are on.
+- `capture-health` now also reports `triggered_recording_armed`, same
+  "keep the UI honest about backend state" reasoning as the other
+  enabled-flags entry above.
+- Frontend: `ReceiverCard` gets a "Record on Signal Detection" toggle
+  next to Detect Signals, reusing the existing recording-mode select.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 105/105 passing (4 new:
+  a full real-detection-starts-and-auto-stops-recording round trip
+  against the mock plugin's capture, disarm-stops-new-triggers,
+  capture-health reflects armed state, and an auth-required check).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, full end-to-end**: tuned the actual RTL2838 to
+  100.3MHz, armed triggered recording, enabled signal detection at an
+  8dB margin -- a real adjacent-station signal on the real receiver
+  triggered a genuine WAV recording within seconds (`0.76s`/`72928
+  bytes` at the moment it was observed, still growing). Test recording
+  deleted afterward via the real API.
+
+## Next Steps
+
+1. Scheduled recording (Phase 8's other remaining item -- start/stop
+   at a wall-clock time rather than on a trigger).
+2. A real retrigger/extend policy if triggered recording needs to
+   capture a signal longer than one fixed `duration_seconds` window
+   in actual field use.
+3. Same environment blocks as ever.

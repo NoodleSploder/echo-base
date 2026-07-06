@@ -16,6 +16,7 @@ from app.plugins.manager import PluginManager
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.stream_service import StreamService
+from app.services.triggered_recording import TriggeredRecordingService
 
 
 def get_settings(request: Request) -> Settings:
@@ -40,6 +41,10 @@ def get_stream_service(request: Request) -> StreamService:
 
 def get_recording_service(request: Request) -> RecordingService:
     return request.app.state.recording_service
+
+
+def get_triggered_recording_service(request: Request) -> TriggeredRecordingService:
+    return request.app.state.triggered_recording_service
 
 
 async def authenticate(

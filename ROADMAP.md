@@ -56,7 +56,9 @@ Long-term goals include:
 ## In Progress
 
 - Richer hardware support beyond `rtl_sdr` (Phase 2)
-- Un-mocking remaining dashboard widgets (Digital Modes, Messaging beyond APRS, Recording, wideband Spectrum Overview) as their backend subsystems land
+- Un-mocking remaining dashboard widgets (Digital Modes -- FT8/DMR need real decoders and, for FT8, HF hardware this environment doesn't have;
+  wideband Spectrum Overview needs a sweeping/multi-capture receiver, not just a single RTL-SDR's ~3MHz instant bandwidth) as their backend
+  subsystems land. Recordings and Messaging/APRS are already real (see Phase 8/Phase 5 Completed below).
 
 ---
 
@@ -333,15 +335,23 @@ Remaining
 
 # Phase 8 — Recording
 
+Completed
+
+- Audio recording (WAV, FM/AM demodulated -- `RecordingService`)
+- IQ recording (raw `.iq` + sample-rate sidecar)
+- Replay (`.iq` recordings play back through the real spectrum/audio/decoder
+  pipeline via `StreamService.register_playback` -- see `RecordingsWidget`)
+- Recording management (list/download/delete via `GET/DELETE /api/recordings`,
+  `RecordingsWidget`)
+
 Remaining
 
-- Audio recording
-- IQ recording
-- Waterfall recording
+- Waterfall recording (a saved spectrogram/FFT-frame capture, distinct from
+  raw IQ -- no concrete use case identified yet beyond what IQ replay already covers)
 - Scheduled recording
-- Triggered recording
-- Replay
-- Recording management
+- Triggered recording (e.g. "record when signal detected" -- `SignalDetected`
+  events already exist as the trigger source; wiring one to `RecordingService`
+  is the remaining piece)
 
 ---
 

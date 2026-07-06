@@ -31,6 +31,7 @@ from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.signal_history import persist_signal_detected, prune_signal_detections
 from app.services.stream_service import StreamService
+from app.services.triggered_recording import TriggeredRecordingService
 from app.websocket.manager import ConnectionManager
 
 logger = get_logger("echo_base.app")
@@ -125,6 +126,8 @@ async def lifespan(app: FastAPI):
     receiver_service = ReceiverService(plugin_manager)
     stream_service = StreamService(receiver_service, event_bus)
     recording_service = RecordingService(stream_service, Path(settings.recordings.directory))
+    triggered_recording_service = TriggeredRecordingService(recording_service, receiver_service)
+    event_bus.subscribe("SignalDetected", triggered_recording_service.handle_signal_detected)
 
     app.state.settings = settings
     app.state.event_bus = event_bus
@@ -133,6 +136,7 @@ async def lifespan(app: FastAPI):
     app.state.receiver_service = receiver_service
     app.state.stream_service = stream_service
     app.state.recording_service = recording_service
+    app.state.triggered_recording_service = triggered_recording_service
 
     await _bootstrap_admin(settings)
 
@@ -151,6 +155,7 @@ async def lifespan(app: FastAPI):
     prune_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await prune_task
+    triggered_recording_service.shutdown()
     recording_service.shutdown()
     stream_service.shutdown()
     plugin_manager.shutdown_all()

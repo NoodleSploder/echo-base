@@ -4,7 +4,13 @@ from dataclasses import asdict, replace
 
 from fastapi import APIRouter, Depends
 
-from app.api.deps import get_current_user, get_receiver_service, get_stream_service, require_role
+from app.api.deps import (
+    get_current_user,
+    get_receiver_service,
+    get_stream_service,
+    get_triggered_recording_service,
+    require_role,
+)
 from app.core.exceptions import ValidationAppError
 from app.db.models.user import User, UserRole
 from app.plugins.receiver import ReceiverStatus
@@ -25,6 +31,7 @@ from app.services.signal_history import (
     query_signal_history,
 )
 from app.services.stream_service import StreamService
+from app.services.triggered_recording import TriggeredRecordingService
 
 router = APIRouter(prefix="/api/receivers", tags=["receivers"])
 
@@ -270,11 +277,16 @@ async def get_signal_history(
 async def get_capture_health(
     receiver_id: str,
     stream_service: StreamService = Depends(get_stream_service),
+    triggered_recording_service: TriggeredRecordingService = Depends(get_triggered_recording_service),
     _: User = Depends(get_current_user),
 ) -> dict:
     """None/`active: false` if nobody's currently subscribed to anything
-    for this receiver -- not an error, just "no capture running"."""
+    for this receiver -- not an error, just "no capture running". Also
+    carries `triggered_recording_armed` -- not itself a capture
+    subscriber, but UI state a client needs to stay in sync with the
+    backend the same way the decoder-enabled flags below do."""
+    armed = triggered_recording_service.is_armed(receiver_id)
     health = stream_service.capture_health(receiver_id)
     if health is None:
-        return ok({"active": False})
-    return ok({"active": True, **health})
+        return ok({"active": False, "triggered_recording_armed": armed})
+    return ok({"active": True, **health, "triggered_recording_armed": armed})

@@ -15,7 +15,7 @@ import {
   stopSignalDetection,
   tuneReceiver,
 } from "../../api/receivers";
-import { startRecording, stopRecording } from "../../api/recordings";
+import { startRecording, startTriggeredRecording, stopRecording, stopTriggeredRecording } from "../../api/recordings";
 import { useAudioPlayer } from "../../hooks/useAudioPlayer";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
@@ -60,6 +60,8 @@ export function ReceiverCard({
   );
   const [historyCount, setHistoryCount] = useState<number | null>(null);
   const [captureStalled, setCaptureStalled] = useState(false);
+  const [triggeredRecordingArmed, setTriggeredRecordingArmed] = useState(false);
+  const [triggeredRecordingBusy, setTriggeredRecordingBusy] = useState(false);
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -201,6 +203,20 @@ export function ReceiverCard({
     };
   }, [occupancyEnabled, receiver.id]);
 
+  async function handleToggleTriggeredRecording() {
+    setTriggeredRecordingBusy(true);
+    try {
+      if (triggeredRecordingArmed) {
+        await stopTriggeredRecording(receiver.id);
+      } else {
+        await startTriggeredRecording(receiver.id, recordingMode, 10);
+      }
+      setTriggeredRecordingArmed((prev) => !prev);
+    } finally {
+      setTriggeredRecordingBusy(false);
+    }
+  }
+
   // Always polls (not just while something's toggled on locally) so a
   // decoder enabled from elsewhere -- e.g. applying a suggested
   // receiver profile with a "decoder" tag, which enables it
@@ -213,6 +229,9 @@ export function ReceiverCard({
       try {
         const health = await getCaptureHealth(receiver.id);
         if (cancelled) return;
+        if (typeof health.triggered_recording_armed === "boolean") {
+          setTriggeredRecordingArmed(health.triggered_recording_armed);
+        }
         if (!health.active) {
           setCaptureStalled(false);
           return;
@@ -431,6 +450,23 @@ export function ReceiverCard({
         )}
         {signalDetectionEnabled && historyCount !== null && (
           <p className="text-xs text-slate-400">{historyCount} detection(s) in the last hour</p>
+        )}
+
+        {supportsAudio && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => void handleToggleTriggeredRecording()}
+              disabled={triggeredRecordingBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                triggeredRecordingArmed
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title={`Records a ${recordingMode.toUpperCase()} clip automatically whenever Signal Detection fires for this receiver (requires Detect Signals to be on too)`}
+            >
+              {triggeredRecordingArmed ? "Armed: Record on Detection" : "Record on Signal Detection"}
+            </button>
+          </div>
         )}
 
         {supportsAudio && (

@@ -67,6 +67,7 @@ export interface CaptureHealth {
   same_enabled?: boolean;
   signal_detection_enabled?: boolean;
   occupancy_enabled?: boolean;
+  triggered_recording_armed?: boolean;
 }
 
 export const getCaptureHealth = (id: string) =>
