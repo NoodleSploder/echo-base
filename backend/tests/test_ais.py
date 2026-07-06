@@ -51,12 +51,40 @@ def _byte_to_wire_bits(value: int) -> list[int]:
     return [(value >> i) & 1 for i in range(8)]
 
 
-def _build_ais_frame(message_type: int, mmsi: int) -> list[int]:
+def _build_ais_frame(message_type: int, mmsi: int, payload_extra_bits: int = 10) -> list[int]:
     # AIS payload fields (message type, MMSI, ...) are MSB-first
     # directly in the raw wire bit sequence per ITU-R M.1371 -- unlike
     # the FCS, there's no separate "byte" repacking step for these.
-    payload_bits = _bits_from_int(message_type, 6) + [0, 0] + _bits_from_int(mmsi, 30) + [0] * 10
+    payload_bits = (
+        _bits_from_int(message_type, 6) + [0, 0] + _bits_from_int(mmsi, 30) + [0] * payload_extra_bits
+    )
     assert len(payload_bits) % 8 == 0
+    packed = _pack_bytes_lsb_first(payload_bits)
+    fcs = compute_fcs(packed)
+    fcs_bits = _byte_to_wire_bits(fcs & 0xFF) + _byte_to_wire_bits((fcs >> 8) & 0xFF)
+    return payload_bits + fcs_bits
+
+
+def _build_ais_position_report(message_type: int, mmsi: int, latitude: float, longitude: float) -> list[int]:
+    lon_raw = round(longitude * 600_000)
+    lat_raw = round(latitude * 600_000)
+    if lon_raw < 0:
+        lon_raw += 1 << 28
+    if lat_raw < 0:
+        lat_raw += 1 << 27
+    payload_bits = (
+        _bits_from_int(message_type, 6)
+        + [0, 0]  # repeat indicator
+        + _bits_from_int(mmsi, 30)
+        + [0] * 4  # nav status
+        + [0] * 8  # rate of turn
+        + [0] * 10  # speed over ground
+        + [0]  # position accuracy
+        + _bits_from_int(lon_raw, 28)
+        + _bits_from_int(lat_raw, 27)
+    )
+    pad = (-len(payload_bits)) % 8  # pad up to a whole number of bytes for FCS packing
+    payload_bits += [0] * pad
     packed = _pack_bytes_lsb_first(payload_bits)
     fcs = compute_fcs(packed)
     fcs_bits = _byte_to_wire_bits(fcs & 0xFF) + _byte_to_wire_bits((fcs >> 8) & 0xFF)
@@ -105,6 +133,43 @@ def test_synthetic_ais_frame_round_trips(message_type, mmsi):
     assert len(messages) == 1
     assert messages[0]["message_type"] == message_type
     assert messages[0]["mmsi"] == mmsi
+
+
+def test_synthetic_ais_position_report_round_trips_lat_lon():
+    frame_bits = _build_ais_position_report(1, 366123456, latitude=37.8199, longitude=-122.4783)
+    samples_per_bit = round(SAMPLE_RATE_HZ / 9600)
+    signal = _synthesize_signal(frame_bits, samples_per_bit)
+    rng = np.random.default_rng(11)
+    pre = rng.choice([-1.0, 1.0], size=50).astype(np.float32)
+    post = rng.choice([-1.0, 1.0], size=50).astype(np.float32)
+    padded = np.concatenate([pre, signal, post])
+
+    decoder = AisDecoder(SAMPLE_RATE_HZ)
+    messages = decoder.feed(padded)
+
+    assert len(messages) == 1
+    assert messages[0]["message_type"] == 1
+    assert messages[0]["mmsi"] == 366123456
+    assert messages[0]["latitude"] == pytest.approx(37.8199, abs=1e-4)
+    assert messages[0]["longitude"] == pytest.approx(-122.4783, abs=1e-4)
+
+
+def test_synthetic_ais_frame_without_position_has_no_lat_lon_keys():
+    # message type 5 (static/voyage data) has no position fields at all.
+    frame_bits = _build_ais_frame(5, 987654321)
+    samples_per_bit = round(SAMPLE_RATE_HZ / 9600)
+    signal = _synthesize_signal(frame_bits, samples_per_bit)
+    rng = np.random.default_rng(13)
+    pre = rng.choice([-1.0, 1.0], size=50).astype(np.float32)
+    post = rng.choice([-1.0, 1.0], size=50).astype(np.float32)
+    padded = np.concatenate([pre, signal, post])
+
+    decoder = AisDecoder(SAMPLE_RATE_HZ)
+    messages = decoder.feed(padded)
+
+    assert len(messages) == 1
+    assert "latitude" not in messages[0]
+    assert "longitude" not in messages[0]
 
 
 def test_decoder_ignores_noise():

@@ -805,10 +805,25 @@ Remaining
 
 ## AIS
 
-Remaining (blocked on position decoding, not the layer framework)
+Completed
 
-- Same shape of gap as ADS-B: the AIS decoder currently extracts
-  message type + MMSI only, not position (see the AIS diary entry).
+- Class A position report decoding (message types 1/2/3):
+  `decoders/ais_position.py` parses the 28/27-bit signed longitude/
+  latitude fields (ITU-R M.1371), no frame-pairing needed (unlike
+  ADS-B's CPR, a full position fits in one message). Wired into
+  `AisDecoder.feed` and persisted on `ais_vessels`
+  (`GET /api/ais/vessels` now returns `latitude`/`longitude`, visible
+  in the AIS Vessels panel's table). Verified via a synthetic
+  encode/decode round-trip through the real bit-sync/NRZI/de-stuffing
+  pipeline (same pattern as the existing AIS message-type/MMSI test).
+
+Remaining (a map layer specifically, not the data itself)
+
+- An actual `AisShipsLayer` on `/map` -- deliberately deferred along
+  with the rest of the Geospatial Intelligence phase's map-layer work
+  for now; the position data itself is real and available via REST.
+- Class B (message types 18/19, smaller craft) -- different bit
+  layout, same shape of work as Class A.
 
 ## Receiver Sites
 

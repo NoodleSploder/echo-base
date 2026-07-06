@@ -38,6 +38,7 @@ export function AisVesselsPanel() {
           <tr>
             <th className="pb-1 font-medium">MMSI</th>
             <th className="pb-1 font-medium">Message Type</th>
+            <th className="pb-1 font-medium">Position</th>
             <th className="pb-1 font-medium">Messages</th>
             <th className="pb-1 font-medium">First seen</th>
             <th className="pb-1 font-medium">Last seen</th>
@@ -48,6 +49,11 @@ export function AisVesselsPanel() {
             <tr key={`${v.receiver_id}-${v.mmsi}`} className="border-t border-base-800">
               <td className="py-1 font-medium text-accent-400">{v.mmsi}</td>
               <td className="py-1 text-slate-400">{v.last_message_type}</td>
+              <td className="py-1 text-slate-400">
+                {v.latitude !== null && v.longitude !== null
+                  ? `${v.latitude.toFixed(4)}, ${v.longitude.toFixed(4)}`
+                  : "-"}
+              </td>
               <td className="py-1 text-slate-400">{v.message_count}</td>
               <td className="py-1 text-slate-400">{new Date(v.first_seen_at).toLocaleTimeString()}</td>
               <td className="py-1 text-slate-400">{new Date(v.last_seen_at).toLocaleTimeString()}</td>

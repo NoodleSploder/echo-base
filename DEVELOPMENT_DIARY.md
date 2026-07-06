@@ -5143,3 +5143,86 @@ capture SSTV state + decode call + snapshot/PNG methods),
    work as Martin M1 with a different timing table.
 3. RF Coverage modeling, CME alerts/radio blackouts, AIS position
    decoding remain the other open items from earlier entries.
+
+## Added: AIS position decoding
+
+The last remaining "position decoding deferred" gap from earlier
+sessions, directly parallel to the ADS-B CPR win: `AisDecoder` only
+ever extracted message type + MMSI, even though real ship position is
+sitting right in the same messages, undecoded.
+
+**Simpler than ADS-B, and worth noting why**: AIS Class A position
+reports (message types 1/2/3) pack a full signed 28-bit longitude and
+27-bit latitude into *one* message -- no even/odd frame-pairing across
+time the way ADS-B's CPR encoding needs. `decoders/ais_position.py` is
+therefore a stateless "parse this message's bits" module, not a
+stateful tracker like `CprPositionResolver` -- a good illustration of
+how "the same category of problem" (recovering a position from a
+digital broadcast) can have meaningfully different actual complexity
+depending on the wire format.
+
+**Verification, honestly scoped differently from ADS-B's**: there's no
+widely-published reference test vector for this the way ADS-B's CPR
+example was, so this leans entirely on the ITU-R M.1371 bit layout
+being implemented correctly, verified via synthetic round-trip (build
+known bits, encode, decode, compare) -- both at the pure bit-parsing
+level (`test_ais_position.py`) and through the *entire* real decode
+pipeline (`test_ais.py`'s existing bit-sync/NRZI/de-stuffing waveform
+synthesis, extended with a full position-report frame). Got correct
+lat/lon back through the whole pipeline on the first attempt -- no
+bugs surfaced this time, unlike SSTV's two real bugs or ADS-B's CPR
+math needing careful verification against the reference example.
+
+**Persistence** follows the exact same shape as ADS-B's:
+`ais_vessels` gained nullable `latitude`/`longitude` columns, only
+ever overwritten by a message that actually carries a position (a
+static/voyage-data message, which never has one, doesn't blank out
+the vessel's last real fix). `GET /api/ais/vessels` now returns
+coordinates, and the existing `AisVesselsPanel` table gained a
+"Position" column -- deliberately *not* a new map layer, since mapping
+work is on hold for now per explicit instruction; this is a plain data
+column, not a Leaflet layer.
+
+**Files added**: `backend/app/services/decoders/ais_position.py`,
+`backend/tests/test_ais_position.py`,
+`backend/alembic/versions/0013_add_ais_vessel_position.py`. Extended:
+`decoders/ais.py`, `services/ais_vessels.py`, `api/routes/ais.py`,
+`tests/test_ais.py`, `tests/test_ais_vessels.py`, `api/ais.ts`,
+`AisVesselsPanel.tsx`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 204/204 passing (5 new in
+  `test_ais_position.py`: round-trip at two different real-world-like
+  coordinates including negative lat/lon, non-position message types
+  correctly ignored, the "position not available" sentinel correctly
+  ignored, short-payload handling; 2 new in `test_ais.py`: a full
+  synthetic waveform round-trip recovering real lat/lon through the
+  entire bit-sync pipeline, and confirming a non-position message type
+  carries no lat/lon keys at all; 3 new in `test_ais_vessels.py`:
+  position persisted, not cleared by a position-less message, updated
+  on a newer fix).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, honestly reported**: confirmed the AIS toggle works
+  correctly against the real attached RTL-SDR (`ais_enabled: true` in
+  capture-health, clean start/stop, `GET /api/ais/vessels` returns
+  correctly-shaped empty data). Real over-the-air decoding is blocked
+  by the same pre-existing `usbfs_memory_mb` capture-thread stall
+  already diagnosed for ADS-B/APRS/SAME/SSTV -- not a new issue. The
+  decode pipeline itself is fully verified via synthetic waveform
+  tests, same confidence level as every other RF decoder in this
+  project given the current environment's capture-hardware block.
+
+## Next Steps
+
+1. This closes out the "position decoding deferred" gaps from earlier
+   sessions -- ADS-B and AIS both now decode real positions. Remaining
+   decoder gaps: AIS Class B (18/19), ADS-B surface position/
+   callsigns, other SSTV modes.
+2. Mapping work (Receiver Sites' sibling layers: AIS ships, RF
+   coverage, heat maps) is on hold per explicit instruction -- revisit
+   later.
+3. Once `usbfs_memory_mb` is raised (needs root): real over-the-air
+   verification becomes possible for every RF decoder in this project
+   at once, not just AIS.

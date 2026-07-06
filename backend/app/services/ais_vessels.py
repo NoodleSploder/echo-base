@@ -20,6 +20,10 @@ async def persist_ais_vessel(event: Event) -> None:
     message_type = event.data.get("message_type")
     if mmsi is None or message_type is None:
         return
+    # Only present for Class A position reports (message type 1/2/3 --
+    # see decoders/ais_position.py); most message types never carry one.
+    latitude = event.data.get("latitude")
+    longitude = event.data.get("longitude")
 
     session_factory = get_session_factory()
     async with session_factory() as db:
@@ -35,12 +39,20 @@ async def persist_ais_vessel(event: Event) -> None:
                 message_count=1,
                 first_seen_at=event.timestamp,
                 last_seen_at=event.timestamp,
+                latitude=latitude,
+                longitude=longitude,
             )
             db.add(vessel)
         else:
             vessel.last_message_type = message_type
             vessel.message_count += 1
             vessel.last_seen_at = event.timestamp
+            # Only overwrite a known position with another known
+            # position -- a message without one (e.g. static/voyage
+            # data) shouldn't blank out the vessel's last real fix.
+            if latitude is not None and longitude is not None:
+                vessel.latitude = latitude
+                vessel.longitude = longitude
         await db.commit()
 
 

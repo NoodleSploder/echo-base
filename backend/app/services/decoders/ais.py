@@ -11,19 +11,23 @@ on the discriminator output rather than a mark/space energy
 comparison. The bit-sync-by-brute-force-phase and NRZI/bit-destuffing
 reasoning in `afsk.py`'s docstring applies here unchanged.
 
-Only message type + MMSI are extracted (bits 0-5 and 8-37 of the
+Message type + MMSI are always extracted (bits 0-5 and 8-37 of the
 destuffed payload, MSB-first per ITU-R M.1371's own bit numbering --
 distinct from the byte-packed, LSB-first representation the FCS check
 uses, which is why this decoder keeps the destuffed bit list around
-instead of only the packed bytes AX.25's decoder returns). Full field
-decoding (position, course, speed, etc. -- different layouts per
-message type) is deliberately out of scope for this first version,
-same "achievable subset first" reasoning as APRS/ADS-B's own gaps.
+instead of only the packed bytes AX.25's decoder returns). Position
+(latitude/longitude) is additionally extracted for Class A position
+reports (message types 1/2/3) via `ais_position.parse_class_a_position`
+-- unlike ADS-B, no frame-pairing is needed, since AIS packs a full
+lat/lon into one message. Course, speed, and Class B (types 18/19,
+a different bit layout) remain deliberately out of scope, same
+"achievable subset first" reasoning as APRS/ADS-B's own gaps.
 """
 from __future__ import annotations
 
 import numpy as np
 
+from app.services.decoders.ais_position import parse_class_a_position
 from app.services.decoders.ax25 import compute_fcs
 
 BAUD = 9600
@@ -104,12 +108,15 @@ class AisDecoder:
                 if len(self._seen_order) > _MAX_SEEN:
                     oldest = self._seen_order.pop(0)
                     self._seen.discard(oldest)
-                results.append(
-                    {
-                        "message_type": _bits_to_int(destuffed[0:6]),
-                        "mmsi": _bits_to_int(destuffed[8:38]),
-                    }
-                )
+                message: dict[str, object] = {
+                    "message_type": _bits_to_int(destuffed[0:6]),
+                    "mmsi": _bits_to_int(destuffed[8:38]),
+                }
+                position = parse_class_a_position(destuffed)
+                if position is not None:
+                    message["latitude"] = position.latitude
+                    message["longitude"] = position.longitude
+                results.append(message)
         return results
 
     def _bits_from_signal(self, phase: int, samples_per_bit: float) -> list[int]:

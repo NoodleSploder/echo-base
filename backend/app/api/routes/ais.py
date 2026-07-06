@@ -27,6 +27,8 @@ async def list_ais_vessels(
                 "message_count": v.message_count,
                 "first_seen_at": v.first_seen_at.isoformat(),
                 "last_seen_at": v.last_seen_at.isoformat(),
+                "latitude": v.latitude,
+                "longitude": v.longitude,
             }
             for v in vessels
         ]
