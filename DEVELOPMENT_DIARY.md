@@ -3442,3 +3442,49 @@ notice "nothing's happening" after the fact.
    available; revisit browser-based UI verification once a display or
    headless browser is available (`ROADMAP.md`'s Known Environment
    Blocks).
+
+## Added: Suggested receiver profile presets
+
+Scoped down from the ROADMAP's "Receiver Profiles: ADS-B, Airband,
+APRS, NOAA, AIS, Amateur..." list -- most of those are full protocol
+decoders (ADS-B/AIS in particular need a very different high-rate
+capture path than the current FM/AM-oriented one, out of scope for one
+slice), but the *profile* half of that list -- "what frequency/gain do
+I tune to for band X" -- is a small, real, immediately useful feature
+on its own, and every entry chosen is within an RTL2832U/R820T's
+tunable range so it's a genuinely usable preset, not a placeholder.
+
+- `backend/app/services/suggested_profiles.py`: a static (non-DB) list
+  of 7 presets -- FM Broadcast, NOAA Weather Radio (SAME-decoder-
+  tagged), APRS 2m (AFSK1200-decoder-tagged), Marine VHF ch16, 2m
+  amateur calling, airband guard, and ADS-B 1090MHz (frequency only --
+  flagged in its own description as "no decoder built yet").
+- `GET /api/receiver-profiles/suggested`: any authenticated role.
+- Frontend: `ReceiverProfilesPanel` now has a "Suggested Presets"
+  section above the create form, each with an "Add" button that calls
+  the existing `createReceiverProfile` (becoming a normal, editable,
+  deletable profile from then on -- no new data model, no special-
+  cased "suggested" profile type to maintain). Already-added presets
+  (matched by frequency) show "Saved" instead and are disabled.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 95/95 passing (no new
+  tests needed -- this endpoint returns a static list, no branching
+  logic to unit-test beyond what FastAPI/pydantic already validate).
+- Frontend: `npm run lint` clean (2 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, full round-trip**: fetched the 7 suggested
+  presets, created a real profile from the "APRS (2m Packet)" preset,
+  applied it to the actual RTL2838 -- confirmed the receiver actually
+  retuned to 144.39MHz with gain "auto" -- then deleted the test
+  profile via the real DELETE endpoint.
+
+## Next Steps
+
+1. ADS-B decoding needs its own higher-sample-rate capture path
+   (StreamService's current design is FM/AM-audio-rate-oriented) --
+   worth a dedicated design pass before starting, not a drop-in like
+   APRS/SAME were.
+2. Same Radio-Manager/browser-verification environment blocks as ever
+   (`ROADMAP.md`).

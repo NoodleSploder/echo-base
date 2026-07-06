@@ -4,6 +4,8 @@ import {
   createReceiverProfile,
   deleteReceiverProfile,
   listReceiverProfiles,
+  listSuggestedProfiles,
+  type SuggestedReceiverProfile,
 } from "../../api/receiverProfiles";
 import type { ReceiverDescriptor, ReceiverProfile, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
@@ -19,6 +21,7 @@ export function ReceiverProfilesPanel({
   onApplied: (receiverId: string, status: ReceiverStatus) => void;
 }) {
   const [profiles, setProfiles] = useState<ReceiverProfile[]>([]);
+  const [suggested, setSuggested] = useState<SuggestedReceiverProfile[]>([]);
   const [name, setName] = useState("");
   const [frequencyMhz, setFrequencyMhz] = useState("");
   const [gain, setGain] = useState("");
@@ -35,7 +38,32 @@ export function ReceiverProfilesPanel({
 
   useEffect(() => {
     void refresh();
+    void listSuggestedProfiles()
+      .then(setSuggested)
+      .catch(() => undefined);
   }, []);
+
+  const savedFrequencies = new Set(profiles.map((p) => p.frequency_hz));
+
+  async function handleAddSuggested(preset: SuggestedReceiverProfile) {
+    setBusyId(preset.id);
+    try {
+      await createReceiverProfile({
+        name: preset.name,
+        frequency_hz: preset.frequency_hz,
+        sample_rate_hz: null,
+        bandwidth_hz: null,
+        gain: preset.gain,
+        decoder: preset.decoder,
+      });
+      setError(null);
+      await refresh();
+    } catch {
+      setError("Unable to save profile.");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -126,6 +154,42 @@ export function ReceiverProfilesPanel({
             </li>
           ))}
         </ul>
+
+        {suggested.length > 0 && (
+          <div className="border-t border-base-700 pt-3">
+            <div className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+              Suggested Presets
+            </div>
+            <ul className="space-y-2">
+              {suggested.map((preset) => {
+                const alreadySaved = savedFrequencies.has(preset.frequency_hz);
+                return (
+                  <li
+                    key={preset.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-base-800 bg-base-900/40 px-3 py-2"
+                  >
+                    <div>
+                      <div className="font-medium text-slate-300">{preset.name}</div>
+                      <div className="text-xs text-slate-500" title={preset.description}>
+                        {(preset.frequency_hz / 1e6).toFixed(4)} MHz
+                        {preset.gain ? ` · gain ${preset.gain}` : ""}
+                        {preset.decoder ? ` · ${preset.decoder.toUpperCase()} decoder` : ""}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busyId === preset.id || alreadySaved}
+                      onClick={() => void handleAddSuggested(preset)}
+                      className="rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-40"
+                    >
+                      {alreadySaved ? "Saved" : "Add"}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-2 border-t border-base-700 pt-3">
           <div className="flex flex-col gap-1">

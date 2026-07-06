@@ -171,17 +171,26 @@ Remaining
 
 ## Receiver Profiles
 
+Completed
+
+- Built-in "suggested" band presets (FM broadcast, NOAA Weather Radio,
+  APRS 2m, Marine VHF ch16, 2m amateur calling, airband guard,
+  ADS-B 1090MHz) -- one-click "Add" turns any of them into a real,
+  editable/deletable saved profile via the existing create/apply flow.
+  All within RTL-SDR tuning range; ADS-B/AIS/HF entries below are
+  listed since a preset just means "tune here", not "decode this" --
+  actual ADS-B/AIS decoding is still unbuilt (see Remaining).
+
 Remaining
 
-- ADS-B
-- Airband
-- APRS
-- NOAA
-- AIS
-- Amateur
-- Weather satellites
-- HF monitoring
-- Spectrum scanning
+- ADS-B decoding (Mode S/1090MHz -- needs a much higher sample rate
+  capture path than the current FM/AM-oriented one; see
+  `suggested_profiles.py`'s ADS-B entry, which is spectrum/IQ-only for now)
+- AIS decoding (161-162MHz VHF, GMSK)
+- Amateur digital modes beyond APRS (see Phase 5)
+- Weather satellite presets (APT/Meteor-M2 downlink decoding, Phase 7)
+- HF monitoring (outside RTL-SDR's tuning range without an upconverter)
+- Spectrum scanning (automated multi-frequency sweep)
 
 ---
 

@@ -19,10 +19,30 @@ from app.schemas.receiver_profile import (
 )
 from app.services.receiver_service import ReceiverService
 from app.services.stream_service import StreamService
+from app.services.suggested_profiles import SUGGESTED_PROFILES
 
 router = APIRouter(prefix="/api/receiver-profiles", tags=["receiver-profiles"])
 
 require_operator = require_role(UserRole.ADMINISTRATOR, UserRole.OPERATOR)
+
+
+@router.get("/suggested")
+async def list_suggested_profiles(_: User = Depends(get_current_user)) -> dict:
+    """Static built-in band presets, not stored per-user -- see
+    `suggested_profiles.py` for why these aren't database rows."""
+    return ok(
+        [
+            {
+                "id": p.id,
+                "name": p.name,
+                "frequency_hz": p.frequency_hz,
+                "gain": p.gain,
+                "decoder": p.decoder,
+                "description": p.description,
+            }
+            for p in SUGGESTED_PROFILES
+        ]
+    )
 
 
 async def _get_owned_profile(profile_id: str, user: User, db: AsyncSession) -> ReceiverProfile:

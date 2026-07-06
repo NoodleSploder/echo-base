@@ -12,3 +12,15 @@ export const applyReceiverProfile = (profileId: string, receiverId: string) =>
   api.post<ReceiverStatus>(
     `/api/receiver-profiles/${encodeURIComponent(profileId)}/apply/${encodeURIComponent(receiverId)}`,
   );
+
+export interface SuggestedReceiverProfile {
+  id: string;
+  name: string;
+  frequency_hz: number;
+  gain: string | null;
+  decoder: string | null;
+  description: string;
+}
+
+export const listSuggestedProfiles = () =>
+  api.get<SuggestedReceiverProfile[]>("/api/receiver-profiles/suggested");
