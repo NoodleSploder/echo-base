@@ -30,6 +30,17 @@ async def test_receiver_lifecycle(client, admin_user):
     assert stop.json()["data"]["state"] == "idle"
 
 
+async def test_ppm_correction_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    resp = await client.post("/api/receivers/mock:0/ppm-correction", json={"ppm": 12})
+    assert resp.status_code == 200
+    assert resp.json()["data"]["ppm_correction"] == 12
+
+    status = await client.get("/api/receivers/mock:0")
+    assert status.json()["data"]["ppm_correction"] == 12
+
+
 async def test_status_reflects_real_capture_without_start(client, admin_user):
     """A spectrum/audio subscriber makes IQ actually flow even if the
     user never clicked Start -- the reported state should say so."""

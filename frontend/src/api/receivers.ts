@@ -11,6 +11,8 @@ export const stopReceiver = (id: string) =>
   api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/stop`);
 export const tuneReceiver = (id: string, frequency: number) =>
   api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/tune`, { frequency });
+export const setPpmCorrection = (id: string, ppm: number) =>
+  api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/ppm-correction`, { ppm });
 
 export const startAprsDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/aprs/start`);

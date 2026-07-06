@@ -59,6 +59,7 @@ class MockReceiverPlugin(ReceiverPlugin):
             "gain": "auto",
             "bandwidth_hz": None,
             "sample_rate_hz": 2_048_000,
+            "ppm_correction": 0,
         }
 
     def discover(self):
@@ -86,6 +87,10 @@ class MockReceiverPlugin(ReceiverPlugin):
 
     def set_sample_rate(self, receiver_id, sample_rate_hz):
         self._state["sample_rate_hz"] = sample_rate_hz
+        return self.device_status(receiver_id)
+
+    def set_ppm_correction(self, receiver_id, ppm):
+        self._state["ppm_correction"] = ppm
         return self.device_status(receiver_id)
 
     def device_status(self, receiver_id):

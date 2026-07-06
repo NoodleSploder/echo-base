@@ -24,6 +24,7 @@ export interface ReceiverStatus {
   sample_rate_hz: number | null;
   bandwidth_hz: number | null;
   gain: string | number | null;
+  ppm_correction: number | null;
   detail: string | null;
 }
 

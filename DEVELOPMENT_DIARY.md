@@ -3783,3 +3783,44 @@ event.
 2. Persist scheduled-recording jobs (currently in-memory) if restart
    survival becomes important.
 3. Same environment blocks as ever.
+
+## Added: PPM (crystal) frequency correction (Phase 2: Calibration)
+
+Closes Phase 2's "Calibration" item. Cheap RTL-SDR dongles commonly
+have crystal oscillator drift of tens of ppm, which shows up as every
+signal being off-frequency by an offset that scales with frequency --
+`rtl_sdr` (the underlying command-line tool this project already
+shells out to) has built-in support for this via its `-p` flag, so
+this is mostly plumbing an existing capability through, the same
+shape as gain/bandwidth/sample-rate before it.
+
+- `ReceiverPlugin.set_ppm_correction` (new, optional base method --
+  plugins without a correction mechanism can leave it raising
+  `NotImplementedError`) and `ReceiverStatus.ppm_correction`.
+- `rtl_sdr` plugin: `_DeviceState.ppm_correction` (default 0), passed
+  as `-p <ppm>` to the `rtl_sdr` subprocess in `open_iq_stream` when
+  non-zero. Same "takes effect on the next capture, not the one
+  already running" behavior gain/bandwidth/sample-rate already have --
+  device state is only read at process-spawn time.
+- `POST /api/receivers/{id}/ppm-correction`; `ReceiverCard` gets a
+  "Calibrate" form next to Tune, plus a PPM correction readout in the
+  status grid.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 110/110 passing (1 new:
+  set via REST, confirm it round-trips through `GET /api/receivers/{id}`).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: set ppm_correction to 15 on the actual RTL2838,
+  confirmed it round-tripped via REST, then started a real Listen
+  session and confirmed via `ps aux` that the spawned `rtl_sdr`
+  process's actual command line included `-p 15` -- not just that the
+  API accepted the value, that it reached the hardware capture. Real
+  audio still streamed correctly (RMS ~8300-9600) with the correction
+  applied. Reset back to 0 afterward.
+
+## Next Steps
+
+1. Same environment blocks as ever -- nothing else concrete queued
+   right now; next slice will need a fresh look at `ROADMAP.md`.

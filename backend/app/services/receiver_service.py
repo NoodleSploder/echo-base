@@ -90,6 +90,10 @@ class ReceiverService:
         plugin = await self._resolve(receiver_id)
         return await asyncio.to_thread(plugin.set_sample_rate, receiver_id, sample_rate_hz)
 
+    async def set_ppm_correction(self, receiver_id: str, ppm: int) -> ReceiverStatus:
+        plugin = await self._resolve(receiver_id)
+        return await asyncio.to_thread(plugin.set_ppm_correction, receiver_id, ppm)
+
     async def status(self, receiver_id: str) -> ReceiverStatus:
         plugin = await self._resolve(receiver_id)
         return await asyncio.to_thread(plugin.device_status, receiver_id)

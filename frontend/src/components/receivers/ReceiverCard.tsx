@@ -3,6 +3,7 @@ import {
   getCaptureHealth,
   getOccupancy,
   getSignalHistory,
+  setPpmCorrection,
   startAprsDecoding,
   startOccupancy,
   startReceiver,
@@ -47,6 +48,7 @@ export function ReceiverCard({
   onChange: (status: ReceiverStatus) => void;
 }) {
   const [frequency, setFrequency] = useState("");
+  const [ppmCorrection, setPpmCorrectionInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
   const [mode, setMode] = useState("fm");
@@ -109,6 +111,18 @@ export function ReceiverCard({
     setBusy(true);
     try {
       onChange(await tuneReceiver(receiver.id, hz));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handlePpmCorrection(event: FormEvent) {
+    event.preventDefault();
+    const ppm = Number(ppmCorrection);
+    if (!Number.isFinite(ppm)) return;
+    setBusy(true);
+    try {
+      onChange(await setPpmCorrection(receiver.id, ppm));
     } finally {
       setBusy(false);
     }
@@ -348,6 +362,8 @@ export function ReceiverCard({
           </span>
           <span>Gain</span>
           <span className="text-slate-200">{status?.gain ?? "-"}</span>
+          <span>PPM correction</span>
+          <span className="text-slate-200">{status?.ppm_correction ?? 0}</span>
         </div>
 
         <form onSubmit={handleTune} className="flex gap-2">
@@ -364,6 +380,24 @@ export function ReceiverCard({
             className="rounded-md bg-accent-500/20 px-3 py-1 text-accent-400 hover:bg-accent-500/30 disabled:opacity-50"
           >
             Tune
+          </button>
+        </form>
+
+        <form onSubmit={handlePpmCorrection} className="flex gap-2">
+          <input
+            type="number"
+            placeholder="PPM correction"
+            value={ppmCorrection}
+            onChange={(event) => setPpmCorrectionInput(event.target.value)}
+            title="Crystal oscillator frequency correction -- cheap RTL-SDR dongles commonly drift tens of ppm"
+            className="w-full rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+          />
+          <button
+            type="submit"
+            disabled={busy}
+            className="rounded-md border border-base-600 px-3 py-1 text-slate-300 hover:bg-base-800 disabled:opacity-50"
+          >
+            Calibrate
           </button>
         </form>
 

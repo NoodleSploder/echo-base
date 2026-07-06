@@ -167,11 +167,13 @@ Completed
 - Live IQ sample streaming (`StreamService`, feeding spectrum/audio/decoders/recording)
 - Capture health monitoring (`GET /api/receivers/{id}/capture-health`: worker-thread liveness,
   last-read age, subscriber counts -- surfaced in the UI as a "Capture stalled" badge)
+- Profiles (see the "Receiver Profiles" section below)
+- Calibration (PPM/crystal frequency correction -- `POST /api/receivers/{id}/ppm-correction`,
+  passed through to `rtl_sdr -p`; a "Calibrate" control in `ReceiverCard`)
 
 Remaining
 
-- Profiles
-- Calibration
+Nothing outstanding in this section right now.
 
 ---
 

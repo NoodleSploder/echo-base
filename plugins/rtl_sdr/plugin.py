@@ -33,6 +33,7 @@ class _DeviceState:
     sample_rate_hz: int | None = 240_000
     bandwidth_hz: int | None = None
     gain: str | float = "auto"
+    ppm_correction: int = 0
 
 
 class _RtlSdrIqStream:
@@ -161,6 +162,11 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
         device.sample_rate_hz = sample_rate_hz
         return self.device_status(receiver_id)
 
+    def set_ppm_correction(self, receiver_id: str, ppm: int) -> ReceiverStatus:
+        device = self._require(receiver_id)
+        device.ppm_correction = ppm
+        return self.device_status(receiver_id)
+
     def device_status(self, receiver_id: str) -> ReceiverStatus:
         device = self._require(receiver_id)
         return ReceiverStatus(
@@ -170,6 +176,7 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
             sample_rate_hz=device.sample_rate_hz,
             bandwidth_hz=device.bandwidth_hz,
             gain=device.gain,
+            ppm_correction=device.ppm_correction,
             detail=None,
         )
 
@@ -189,6 +196,8 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
         args = [binary, "-d", str(device.index), "-f", str(frequency_hz), "-s", str(sample_rate_hz)]
         if isinstance(device.gain, int | float) or (isinstance(device.gain, str) and device.gain != "auto"):
             args += ["-g", str(device.gain)]
+        if device.ppm_correction:
+            args += ["-p", str(device.ppm_correction)]
         args.append("-")  # write raw samples to stdout
 
         process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)

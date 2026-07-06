@@ -35,6 +35,7 @@ class ReceiverStatus:
     sample_rate_hz: int | None = None
     bandwidth_hz: int | None = None
     gain: str | float | None = None
+    ppm_correction: int | None = None
     detail: str | None = None
 
 
@@ -83,6 +84,14 @@ class ReceiverPlugin(Plugin):
         raise NotImplementedError
 
     def set_sample_rate(self, receiver_id: str, sample_rate_hz: int) -> ReceiverStatus:
+        raise NotImplementedError
+
+    def set_ppm_correction(self, receiver_id: str, ppm: int) -> ReceiverStatus:
+        """Crystal oscillator frequency correction, in parts per million --
+        cheap RTL-SDR dongles commonly drift tens of ppm, which shows up
+        as every signal being off-frequency by a fixed offset that scales
+        with frequency. Optional: plugins without a hardware/software
+        correction mechanism should leave this raising NotImplementedError."""
         raise NotImplementedError
 
     def device_status(self, receiver_id: str) -> ReceiverStatus:

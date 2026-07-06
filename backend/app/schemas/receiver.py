@@ -20,6 +20,7 @@ class ReceiverStatusSchema(BaseModel):
     sample_rate_hz: int | None = None
     bandwidth_hz: int | None = None
     gain: str | float | None = None
+    ppm_correction: int | None = None
     detail: str | None = None
 
 
@@ -37,6 +38,10 @@ class BandwidthRequest(BaseModel):
 
 class SampleRateRequest(BaseModel):
     sample_rate: int
+
+
+class PpmCorrectionRequest(BaseModel):
+    ppm: int
 
 
 class SignalDetectionRequest(BaseModel):

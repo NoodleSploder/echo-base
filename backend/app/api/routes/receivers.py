@@ -18,6 +18,7 @@ from app.schemas.common import ok
 from app.schemas.receiver import (
     BandwidthRequest,
     GainRequest,
+    PpmCorrectionRequest,
     ReceiverDescriptorSchema,
     ReceiverStatusSchema,
     SampleRateRequest,
@@ -145,6 +146,21 @@ async def set_sample_rate(
     _: User = Depends(require_operator),
 ) -> dict:
     status = await service.set_sample_rate(receiver_id, payload.sample_rate)
+    return _status_response(status, receiver_id, stream_service)
+
+
+@router.post("/{receiver_id}/ppm-correction")
+async def set_ppm_correction(
+    receiver_id: str,
+    payload: PpmCorrectionRequest,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    """Crystal oscillator frequency correction (parts per million) --
+    takes effect on the receiver's *next* capture (tune/start/re-tune),
+    not the one already running, same as gain/bandwidth/sample-rate."""
+    status = await service.set_ppm_correction(receiver_id, payload.ppm)
     return _status_response(status, receiver_id, stream_service)
 
 
