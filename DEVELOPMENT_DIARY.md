@@ -4115,3 +4115,39 @@ held.
 2. Callsign (BDS 2,0) and position (CPR) decoding, once DF17/18 +
    ICAO extraction has a real confirmed decode to build on.
 3. Same environment blocks as ever.
+
+## Added: ADS-B aircraft persistence
+
+Follow-on to the Mode S decoder above: every `AdsbMessage` event now
+gets upserted into an `adsb_aircraft` table (last known contact +
+running message count per ICAO address), same shape as
+`aprs_stations.py` -- "who's currently on the map", not a full message
+log.
+
+- `adsb_aircraft` table (migration 0009), `services/adsb_aircraft.py`
+  (`persist_adsb_aircraft` subscriber + `list_aircraft` query),
+  `GET /api/adsb/aircraft`.
+- Frontend: `AdsbAircraftPanel` on the Receivers page -- ICAO, last
+  type code, message count, first/last seen. Renders nothing if no
+  aircraft have been seen recently (true for this environment right
+  now, per the previous entry's real-listen result), same
+  render-nothing-when-empty pattern as `ReceiverInventoryPanel`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 130/130 passing (5 new:
+  persist-and-query round trip, repeated-sightings-increment-not-
+  duplicate, per-receiver filter, REST round trip, auth required).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: confirmed `GET /api/adsb/aircraft` live against
+  the running backend -- correctly empty, consistent with no real
+  ADS-B message having been decoded in this environment yet (see the
+  Mode S decoder entry for why).
+
+## Next Steps
+
+1. Same as the Mode S decoder entry -- a better 1090MHz antenna/
+   location would be the strongest next validation step for both the
+   decoder and this persistence layer.
+2. Same environment blocks as ever.

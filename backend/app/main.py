@@ -26,6 +26,7 @@ from app.db import session as db_session
 from app.db.models.user import User, UserRole
 from app.plugins.manager import PluginManager
 from app.schemas.common import fail
+from app.services.adsb_aircraft import persist_adsb_aircraft
 from app.services.aprs_stations import persist_aprs_station
 from app.services.hotplug_monitor import HotplugMonitor
 from app.services.receiver_service import ReceiverService
@@ -115,6 +116,7 @@ async def lifespan(app: FastAPI):
     connection_manager = ConnectionManager(event_bus)
     event_bus.subscribe("SignalDetected", persist_signal_detected)
     event_bus.subscribe("AprsPacket", persist_aprs_station)
+    event_bus.subscribe("AdsbMessage", persist_adsb_aircraft)
 
     disabled_ids = {plugin_id for plugin_id, enabled in settings.plugins.enabled.items() if not enabled}
     plugin_manager = PluginManager(

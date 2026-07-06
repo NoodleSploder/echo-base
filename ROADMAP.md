@@ -205,6 +205,10 @@ Completed
   bug). Callsign (BDS 2,0) and position (needs even/odd CPR frame
   pairing) decoding are deliberately not built yet, same "ship the
   achievable subset first" reasoning as APRS's Mic-E gap.
+- ADS-B aircraft persistence (`adsb_aircraft` table: last known contact
+  + message count per ICAO address, same upsert-on-event shape as
+  `aprs_stations` -- `GET /api/adsb/aircraft`, `AdsbAircraftPanel` on
+  the Receivers page).
 
 Remaining
 
