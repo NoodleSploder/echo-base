@@ -49,3 +49,8 @@ class SignalDetectionRequest(BaseModel):
     # value -- the raw FFT scale isn't calibrated and shifts with gain
     # (see signal_detection.py's docstring).
     margin_db: float = 15.0
+
+
+class ScanRequest(BaseModel):
+    frequencies: list[int]
+    dwell_seconds: float = 2.0

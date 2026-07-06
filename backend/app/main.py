@@ -34,6 +34,7 @@ from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.scheduled_recording import ScheduledRecordingService
 from app.services.signal_history import persist_signal_detected, prune_signal_detections
+from app.services.spectrum_scan import SpectrumScanService
 from app.services.stream_service import StreamService
 from app.services.triggered_recording import TriggeredRecordingService
 from app.websocket.manager import ConnectionManager
@@ -136,6 +137,7 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("SignalDetected", triggered_recording_service.handle_signal_detected)
     scheduled_recording_service = ScheduledRecordingService(recording_service, receiver_service)
     hotplug_monitor = HotplugMonitor(receiver_service, event_bus)
+    spectrum_scan_service = SpectrumScanService(receiver_service)
 
     app.state.settings = settings
     app.state.event_bus = event_bus
@@ -147,6 +149,7 @@ async def lifespan(app: FastAPI):
     app.state.triggered_recording_service = triggered_recording_service
     app.state.scheduled_recording_service = scheduled_recording_service
     app.state.hotplug_monitor = hotplug_monitor
+    app.state.spectrum_scan_service = spectrum_scan_service
 
     await _bootstrap_admin(settings)
     await hotplug_monitor.start(settings.hotplug.poll_interval_seconds)
@@ -166,6 +169,7 @@ async def lifespan(app: FastAPI):
     prune_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await prune_task
+    spectrum_scan_service.shutdown()
     hotplug_monitor.shutdown()
     scheduled_recording_service.shutdown()
     triggered_recording_service.shutdown()

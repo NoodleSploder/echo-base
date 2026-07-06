@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import (
     get_current_user,
     get_receiver_service,
+    get_spectrum_scan_service,
     get_stream_service,
     get_triggered_recording_service,
     require_role,
@@ -22,6 +23,7 @@ from app.schemas.receiver import (
     ReceiverDescriptorSchema,
     ReceiverStatusSchema,
     SampleRateRequest,
+    ScanRequest,
     SignalDetectionRequest,
     TuneRequest,
 )
@@ -32,6 +34,7 @@ from app.services.signal_history import (
     DEFAULT_HISTORY_MINUTES,
     query_signal_history,
 )
+from app.services.spectrum_scan import SpectrumScanService
 from app.services.stream_service import StreamService
 from app.services.triggered_recording import TriggeredRecordingService
 
@@ -192,6 +195,45 @@ async def set_ppm_correction(
     not the one already running, same as gain/bandwidth/sample-rate."""
     status = await service.set_ppm_correction(receiver_id, payload.ppm)
     return _status_response(status, receiver_id, stream_service)
+
+
+@router.post("/{receiver_id}/scan/start")
+async def start_scan(
+    receiver_id: str,
+    payload: ScanRequest,
+    service: ReceiverService = Depends(get_receiver_service),
+    scan_service: SpectrumScanService = Depends(get_spectrum_scan_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    """Cycles the receiver through `frequencies` on a timer (`dwell_seconds`
+    each), the same way the manual Tune button retunes it -- confirms the
+    receiver exists first (raises ReceiverNotFoundError otherwise)."""
+    await service.status(receiver_id)
+    try:
+        scan_service.start(receiver_id, payload.frequencies, payload.dwell_seconds)
+    except ValueError as exc:
+        raise ValidationAppError(str(exc)) from exc
+    return ok({"message": "Scan started.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/scan/stop")
+async def stop_scan(
+    receiver_id: str,
+    scan_service: SpectrumScanService = Depends(get_spectrum_scan_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    scan_service.stop(receiver_id)
+    return ok({"message": "Scan stopped.", "receiver_id": receiver_id})
+
+
+@router.get("/{receiver_id}/scan/status")
+async def get_scan_status(
+    receiver_id: str,
+    scan_service: SpectrumScanService = Depends(get_spectrum_scan_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    status = scan_service.status(receiver_id)
+    return ok({"active": status is not None, **(status or {})})
 
 
 @router.post("/{receiver_id}/aprs/start")

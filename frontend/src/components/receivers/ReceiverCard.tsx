@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import {
   getCaptureHealth,
   getOccupancy,
+  getScanStatus,
   getSignalHistory,
   setPpmCorrection,
   startAdsBDecoding,
@@ -10,6 +11,7 @@ import {
   startOccupancy,
   startReceiver,
   startSameDecoding,
+  startScan,
   startSignalDetection,
   stopAdsBDecoding,
   stopAisDecoding,
@@ -17,6 +19,7 @@ import {
   stopOccupancy,
   stopReceiver,
   stopSameDecoding,
+  stopScan,
   stopSignalDetection,
   tuneReceiver,
 } from "../../api/receivers";
@@ -65,6 +68,14 @@ export function ReceiverCard({
   const [adsBBusy, setAdsBBusy] = useState(false);
   const [aisEnabled, setAisEnabled] = useState(false);
   const [aisBusy, setAisBusy] = useState(false);
+  const [scanFrequencies, setScanFrequencies] = useState("");
+  const [scanDwellSeconds, setScanDwellSeconds] = useState(2);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanStatus, setScanStatus] = useState<{
+    active: boolean;
+    currentFrequencyHz?: number;
+  }>({ active: false });
   const [recording, setRecording] = useState(false);
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -189,6 +200,51 @@ export function ReceiverCard({
       setAisEnabled((prev) => !prev);
     } finally {
       setAisBusy(false);
+    }
+  }
+
+  async function refreshScanStatus() {
+    try {
+      const status = await getScanStatus(receiver.id);
+      setScanStatus({ active: status.active, currentFrequencyHz: status.current_frequency_hz });
+    } catch {
+      // Transient poll failure; keep showing the last good status.
+    }
+  }
+
+  useEffect(() => {
+    void refreshScanStatus();
+    const interval = setInterval(refreshScanStatus, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiver.id]);
+
+  async function handleStartScan(event: FormEvent) {
+    event.preventDefault();
+    const frequencies = scanFrequencies
+      .split(",")
+      .map((part) => Math.round(Number(part.trim()) * 1e6))
+      .filter((hz) => Number.isFinite(hz) && hz > 0);
+    if (frequencies.length === 0) return;
+    setScanBusy(true);
+    setScanError(null);
+    try {
+      await startScan(receiver.id, frequencies, scanDwellSeconds);
+      await refreshScanStatus();
+    } catch {
+      setScanError("Could not start scan.");
+    } finally {
+      setScanBusy(false);
+    }
+  }
+
+  async function handleStopScan() {
+    setScanBusy(true);
+    try {
+      await stopScan(receiver.id);
+      await refreshScanStatus();
+    } finally {
+      setScanBusy(false);
     }
   }
 
@@ -438,6 +494,52 @@ export function ReceiverCard({
             Calibrate
           </button>
         </form>
+
+        <div className="space-y-1 border-t border-base-700 pt-3">
+          <form onSubmit={(event) => void handleStartScan(event)} className="flex flex-wrap items-center gap-2">
+            <input
+              value={scanFrequencies}
+              onChange={(event) => setScanFrequencies(event.target.value)}
+              placeholder="Frequencies (MHz, comma-separated)"
+              disabled={scanStatus.active}
+              className="min-w-0 flex-1 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500 disabled:opacity-50"
+            />
+            <input
+              type="number"
+              min={0.5}
+              step={0.5}
+              value={scanDwellSeconds}
+              onChange={(event) => setScanDwellSeconds(Number(event.target.value))}
+              disabled={scanStatus.active}
+              title="Dwell time per frequency (seconds)"
+              className="w-16 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+            />
+            {scanStatus.active ? (
+              <button
+                type="button"
+                onClick={() => void handleStopScan()}
+                disabled={scanBusy}
+                className="rounded-md bg-red-500/20 px-2 py-1 text-xs text-red-400 hover:bg-red-500/30 disabled:opacity-50"
+              >
+                Stop Scan
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={scanBusy}
+                className="rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"
+              >
+                Start Scan
+              </button>
+            )}
+          </form>
+          {scanStatus.active && scanStatus.currentFrequencyHz && (
+            <p className="text-xs text-slate-400">
+              Scanning -- currently {(scanStatus.currentFrequencyHz / 1e6).toFixed(4)} MHz
+            </p>
+          )}
+          {scanError && <p className="text-xs text-red-400">{scanError}</p>}
+        </div>
 
         <div className="flex gap-2">
           <button

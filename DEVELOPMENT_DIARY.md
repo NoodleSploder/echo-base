@@ -4224,3 +4224,49 @@ as `adsb_aircraft.py`.
 3. Same environment blocks as ever -- this closes out essentially
    every concretely-scoped, hardware-testable-here item across the
    phases touched this session.
+
+## Added: Spectrum scanning (automated multi-frequency sweep)
+
+Closes the "Spectrum scanning" item -- the last concretely-scoped
+Receiver Profiles/Phase 2 ROADMAP item that didn't need new hardware
+or a browser. `SpectrumScanService` cycles a receiver through a fixed
+frequency list on a timer, dwelling `dwell_seconds` on each before
+retuning to the next, built entirely on `ReceiverService.tune` (the
+same call the manual Tune button uses) -- no new hardware primitive.
+
+Deliberately just retunes on a schedule; it doesn't itself decide
+anything is "busy" -- that's what `enable_signal_detection`/
+`enable_occupancy` already do, and combining a scan with either is
+left as a UI/caller concern rather than fusing them into one
+subsystem. `GET/POST /api/receivers/{id}/scan/start|stop|status`; a
+scan control (comma-separated MHz list + dwell seconds) on
+`ReceiverCard`, showing the currently-scanning frequency.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 145/145 passing (4 new:
+  a real cycle-through-three-frequencies test against the mock
+  plugin's actual `tune()` calls -- not a stubbed timer -- plus
+  status-reports-current-frequency, empty-list-rejected-422, auth
+  required).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: started a scan on the actual RTL2838 across
+  three real frequencies (100.3MHz, 144.39MHz, 162.4MHz) at a 2s
+  dwell, and confirmed via `GET /api/receivers/{id}` (the receiver's
+  own live status, independent of the scan service's internal state)
+  that all three frequencies were genuinely tuned on the real hardware
+  in the expected sequence -- not just that the scan service's own
+  bookkeeping advanced. Stopped the scan and returned the receiver to
+  its default frequency afterward.
+
+## Next Steps
+
+1. This closes out essentially every concretely-scoped,
+   hardware-testable-here item identified across Phases 1, 2, 4, 8,
+   and 9 this session. Remaining ROADMAP items are large new-decoder
+   projects (FT8/DMR/full ADS-B-AIS field decoding), blocked on
+   hardware this environment doesn't have (Radio Manager/HF/other SDR
+   vendors), or blocked on a browser (map rendering, accessibility,
+   visual verification generally).
+2. Same environment blocks as ever.

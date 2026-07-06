@@ -14,6 +14,24 @@ export const tuneReceiver = (id: string, frequency: number) =>
 export const setPpmCorrection = (id: string, ppm: number) =>
   api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/ppm-correction`, { ppm });
 
+export interface ScanStatus {
+  active: boolean;
+  frequencies?: number[];
+  dwell_seconds?: number;
+  current_index?: number;
+  current_frequency_hz?: number;
+}
+
+export const startScan = (id: string, frequencies: number[], dwellSeconds: number) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/scan/start`, {
+    frequencies,
+    dwell_seconds: dwellSeconds,
+  });
+export const stopScan = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/scan/stop`);
+export const getScanStatus = (id: string) =>
+  api.get<ScanStatus>(`/api/receivers/${encodeURIComponent(id)}/scan/status`);
+
 export const startAprsDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/aprs/start`);
 export const stopAprsDecoding = (id: string) =>

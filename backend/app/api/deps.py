@@ -16,6 +16,7 @@ from app.plugins.manager import PluginManager
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.scheduled_recording import ScheduledRecordingService
+from app.services.spectrum_scan import SpectrumScanService
 from app.services.stream_service import StreamService
 from app.services.triggered_recording import TriggeredRecordingService
 
@@ -50,6 +51,11 @@ def get_triggered_recording_service(request: Request) -> TriggeredRecordingServi
 
 def get_scheduled_recording_service(request: Request) -> ScheduledRecordingService:
     return request.app.state.scheduled_recording_service
+
+
+def get_spectrum_scan_service(request: Request) -> SpectrumScanService:
+    return request.app.state.spectrum_scan_service
+
 
 
 async def authenticate(

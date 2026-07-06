@@ -220,13 +220,18 @@ Completed
   vessel decoded yet in this environment (no confirmed marine VHF
   traffic in range here) -- same category as every other real-traffic
   gap in this project.
+- Spectrum scanning (`SpectrumScanService`: cycles a receiver through a
+  frequency list on a timer via the same `tune` call the manual Tune
+  button uses -- `GET/POST .../scan/start|stop|status`, a scan control
+  on `ReceiverCard`). Just retunes on a schedule; combining it with
+  signal detection/occupancy to flag "busy" frequencies is a UI/caller
+  concern, not fused into the scan subsystem itself.
 
 Remaining
 
 - Amateur digital modes beyond APRS (see Phase 5)
 - Weather satellite presets (APT/Meteor-M2 downlink decoding, Phase 7)
 - HF monitoring (outside RTL-SDR's tuning range without an upconverter)
-- Spectrum scanning (automated multi-frequency sweep)
 
 ---
 
