@@ -5,6 +5,7 @@ import { ComingSoonPage } from "./pages/ComingSoonPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReceiversPage } from "./pages/ReceiversPage";
+import { SatellitesPage } from "./pages/SatellitesPage";
 
 export function App() {
   return (
@@ -24,6 +25,7 @@ export function App() {
         <Route path="digital-modes" element={<ComingSoonPage title="Digital Modes" phase="Phase 5" />} />
         <Route path="messaging" element={<ComingSoonPage title="Messaging Center" phase="Phase 5" />} />
         <Route path="map" element={<ComingSoonPage title="Map" phase="Phase 9" />} />
+        <Route path="satellites" element={<SatellitesPage />} />
         <Route path="alerts" element={<ComingSoonPage title="Alerts" phase="Phase 11" />} />
         <Route path="logs" element={<ComingSoonPage title="Logs" phase="Phase 1 (remaining: /api/system/logs)" />} />
         <Route path="system" element={<ComingSoonPage title="System" phase="Phase 1" />} />

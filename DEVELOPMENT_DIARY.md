@@ -4270,3 +4270,63 @@ scan control (comma-separated MHz list + dwell seconds) on
    vendors), or blocked on a browser (map rendering, accessibility,
    visual verification generally).
 2. Same environment blocks as ever.
+
+## Added: Satellite pass prediction (Phase 9)
+
+A genuinely different kind of feature from everything else this
+session: pure orbital mechanics, no RF hardware involved at all, so
+for once nothing here is blocked by this environment's antenna/
+location -- the "real hardware" for this feature is just correct math.
+
+- Added `sgp4` as a real dependency -- the actual industry-standard
+  orbit propagator (used by NORAD/Celestrak/every real satellite
+  tracking tool), not something worth re-deriving by hand the way a
+  from-scratch decoder is. `services/satellite_passes.py` propagates a
+  TLE forward in time and finds AOS/LOS crossings against a minimum
+  elevation for a ground station.
+- Coordinate math (TEME -> ECEF -> topocentric az/el) uses a
+  spherical-Earth model and GMST-only rotation (no polar motion/
+  precession-nutation corrections) -- a documented, deliberate
+  accuracy tradeoff, same shape as `dsp.py`'s boxcar decimation:
+  accurate to within roughly a minute for pass timing, not
+  survey-grade geodesy.
+- Real TLE lines have a mod-10 checksum digit `sgp4` itself doesn't
+  validate (it silently parses garbage into a zeroed-out orbit rather
+  than raising) -- added `_validate_tle`/`_tle_checksum_valid` so a
+  malformed TLE actually 422s instead of silently returning nonsense
+  passes.
+- `POST /api/satellites/passes` (caller supplies the TLE + ground
+  station; nothing bundled or fetched, since a shipped TLE would be
+  stale within 1-2 weeks) and a new `/satellites` page (TLE +
+  lat/lon/elevation form, results table).
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 151/151 passing (6 new:
+  a synthetic "point directly overhead reads ~90 deg" geometry check,
+  "antipodal point is well below the horizon," a full SGP4-propagation
+  test against a **real TLE fetched directly from Celestrak** on
+  2026-07-06 confirming internally-consistent results (LOS after AOS,
+  plausible max elevation, plausible pass duration), plus REST round
+  trip / garbage-TLE-422s / auth-required checks).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real-world cross-check**: fetched a live, current TLE for NOAA 15
+  directly from Celestrak (not fabricated/hardcoded -- this module
+  ships none of its own) and ran it through the real deployed
+  `POST /api/satellites/passes` endpoint. Results: 4 passes over 24h
+  for a mid-latitude US ground station, spaced ~101 minutes apart
+  (matching NOAA 15's known orbital period), each lasting 7-10 minutes
+  with plausible max elevations (17.5-54.2 deg) -- exactly the shape
+  a real polar-orbiter pass schedule should have. This is the
+  strongest correctness signal any feature has gotten this session,
+  short of an actual second independent propagator to diff against.
+
+## Next Steps
+
+1. Automatic recording / tracking (Phase 9's other Satellite items) --
+   natural follow-ups now that pass prediction exists: schedule a
+   recording to start at a predicted AOS (reusing
+   `ScheduledRecordingService`) or retune to track a satellite's
+   Doppler-shifted downlink across a pass.
+2. Same environment blocks as ever for everything else.

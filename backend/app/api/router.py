@@ -16,6 +16,7 @@ from app.api.routes import (
     receiver_profiles,
     receivers,
     recordings,
+    satellites,
     spectrum,
     system,
     users,
@@ -37,3 +38,4 @@ api_router.include_router(recordings.router)
 api_router.include_router(aprs.router)
 api_router.include_router(adsb.router)
 api_router.include_router(ais.router)
+api_router.include_router(satellites.router)

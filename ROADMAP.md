@@ -359,9 +359,19 @@ Remaining
 
 ## Satellite
 
+Completed
+
+- Pass prediction (`satellite_passes.py`: real SGP4 propagation via the
+  `sgp4` library -- the industry-standard implementation, not
+  hand-derived -- plus a spherical-Earth/GMST-only topocentric az/el
+  model, accurate for pass timing to within roughly a minute.
+  `POST /api/satellites/passes`; a `/satellites` page with a TLE +
+  ground-station form. Callers supply their own current TLE (e.g. from
+  Celestrak) -- none is bundled/fetched, since a shipped TLE would be
+  stale within 1-2 weeks.)
+
 Remaining
 
-- Pass prediction
 - Automatic recording
 - Tracking
 - Scheduling
