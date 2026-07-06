@@ -3,9 +3,11 @@ import {
   startAprsDecoding,
   startReceiver,
   startSameDecoding,
+  startSignalDetection,
   stopAprsDecoding,
   stopReceiver,
   stopSameDecoding,
+  stopSignalDetection,
   tuneReceiver,
 } from "../../api/receivers";
 import { startRecording, stopRecording } from "../../api/recordings";
@@ -43,6 +45,9 @@ export function ReceiverCard({
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingError, setRecordingError] = useState<string | null>(null);
   const [recordingMode, setRecordingMode] = useState("fm");
+  const [signalDetectionEnabled, setSignalDetectionEnabled] = useState(false);
+  const [signalDetectionBusy, setSignalDetectionBusy] = useState(false);
+  const [marginDb, setMarginDb] = useState(15);
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -106,6 +111,20 @@ export function ReceiverCard({
       setSameEnabled((prev) => !prev);
     } finally {
       setSameBusy(false);
+    }
+  }
+
+  async function handleToggleSignalDetection() {
+    setSignalDetectionBusy(true);
+    try {
+      if (signalDetectionEnabled) {
+        await stopSignalDetection(receiver.id);
+      } else {
+        await startSignalDetection(receiver.id, marginDb);
+      }
+      setSignalDetectionEnabled((prev) => !prev);
+    } finally {
+      setSignalDetectionBusy(false);
     }
   }
 
@@ -261,6 +280,32 @@ export function ReceiverCard({
               title="Decoded NOAA Weather Radio SAME alerts appear in the Activity Feed, System Log, and Alerts widgets"
             >
               {sameEnabled ? "SAME Decoding On" : "Decode SAME"}
+            </button>
+          </div>
+        )}
+
+        {supportsAudio && (
+          <div className="flex items-center gap-2 border-t border-base-700 pt-3">
+            <input
+              type="number"
+              value={marginDb}
+              onChange={(event) => setMarginDb(Number(event.target.value))}
+              disabled={signalDetectionEnabled}
+              step={5}
+              className="w-16 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+              title="dB above the noise floor required to count as a signal"
+            />
+            <button
+              onClick={() => void handleToggleSignalDetection()}
+              disabled={signalDetectionBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                signalDetectionEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Detected signal peaks appear in the Activity Feed and System Log widgets"
+            >
+              {signalDetectionEnabled ? "Signal Detection On" : "Detect Signals"}
             </button>
           </div>
         )}

@@ -14,6 +14,7 @@ from app.schemas.receiver import (
     ReceiverDescriptorSchema,
     ReceiverStatusSchema,
     SampleRateRequest,
+    SignalDetectionRequest,
     TuneRequest,
 )
 from app.services.receiver_service import ReceiverService
@@ -178,3 +179,26 @@ async def stop_same_decoding(
 ) -> dict:
     await stream_service.disable_same(receiver_id)
     return ok({"message": "SAME decoding disabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/signal-detection/start")
+async def start_signal_detection(
+    receiver_id: str,
+    payload: SignalDetectionRequest,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    status = await service.status(receiver_id)  # raises ReceiverNotFoundError if unknown
+    await stream_service.enable_signal_detection(receiver_id, payload.margin_db, status.frequency_hz)
+    return ok({"message": "Signal detection enabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/signal-detection/stop")
+async def stop_signal_detection(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await stream_service.disable_signal_detection(receiver_id)
+    return ok({"message": "Signal detection disabled.", "receiver_id": receiver_id})

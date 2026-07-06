@@ -21,3 +21,10 @@ export const startSameDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/same/start`);
 export const stopSameDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/same/stop`);
+
+export const startSignalDetection = (id: string, marginDb: number) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/signal-detection/start`, {
+    margin_db: marginDb,
+  });
+export const stopSignalDetection = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/signal-detection/stop`);

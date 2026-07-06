@@ -37,3 +37,10 @@ class BandwidthRequest(BaseModel):
 
 class SampleRateRequest(BaseModel):
     sample_rate: int
+
+
+class SignalDetectionRequest(BaseModel):
+    # dB above the spectrum's own estimated noise floor, not an absolute
+    # value -- the raw FFT scale isn't calibrated and shifts with gain
+    # (see signal_detection.py's docstring).
+    margin_db: float = 15.0

@@ -50,6 +50,33 @@ async def test_status_reflects_real_capture_without_start(client, admin_user):
     assert idle_again.json()["data"]["state"] == "idle"
 
 
+async def test_signal_detection_start_stop_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    start = await client.post(
+        "/api/receivers/mock:0/signal-detection/start", json={"margin_db": 15.0}
+    )
+    assert start.status_code == 200
+
+    active = await client.get("/api/receivers/mock:0")
+    assert active.json()["data"]["state"] == "streaming"
+
+    stop = await client.post("/api/receivers/mock:0/signal-detection/stop")
+    assert stop.status_code == 200
+
+    idle = await client.get("/api/receivers/mock:0")
+    assert idle.json()["data"]["state"] == "idle"
+
+
+async def test_signal_detection_start_unknown_receiver_404s(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    resp = await client.post(
+        "/api/receivers/does-not-exist/signal-detection/start", json={"margin_db": 15.0}
+    )
+    assert resp.status_code == 404
+
+
 async def test_unknown_receiver_returns_404(client, admin_user):
     await client.post("/api/auth/login", json=admin_user)
 

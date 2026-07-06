@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
 from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator
 from app.services.receiver_service import ReceiverService
+from app.services.signal_detection import PeakTracker, bin_to_frequency_offset_hz, find_peak_bins
 
 logger = logging.getLogger("echo_base.stream")
 
@@ -104,6 +106,10 @@ class _ReceiverCapture:
         self._aprs_decoder: Afsk1200Decoder | None = None
         self._same_enabled = False
         self._same_decoder: SameDecoder | None = None
+        self._signal_detection_enabled = False
+        self._signal_margin_db = 0.0
+        self._signal_center_frequency_hz: int | None = None
+        self._peak_tracker: PeakTracker | None = None
         self._handle: IqStreamHandle | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -115,6 +121,7 @@ class _ReceiverCapture:
             and not self._iq_subscribers
             and not self._aprs_enabled
             and not self._same_enabled
+            and not self._signal_detection_enabled
         )
 
     @property
@@ -134,6 +141,16 @@ class _ReceiverCapture:
     def disable_same(self) -> None:
         self._same_enabled = False
         self._same_decoder = None
+
+    def enable_signal_detection(self, margin_db: float, center_frequency_hz: int | None) -> None:
+        self._signal_detection_enabled = True
+        self._signal_margin_db = margin_db
+        self._signal_center_frequency_hz = center_frequency_hz
+        self._peak_tracker = PeakTracker()
+
+    def disable_signal_detection(self) -> None:
+        self._signal_detection_enabled = False
+        self._peak_tracker = None
 
     def add_spectrum_subscriber(self, queue: asyncio.Queue[bytes]) -> None:
         self._spectrum_subscribers.add(queue)
@@ -193,12 +210,18 @@ class _ReceiverCapture:
                 imag = (samples[1::2] - 127.5) / 127.5
                 complex_samples = real + 1j * imag
 
-                if self._spectrum_subscribers and len(complex_samples) >= FFT_SIZE:
+                need_fft = self._spectrum_subscribers or self._signal_detection_enabled
+                if need_fft and len(complex_samples) >= FFT_SIZE:
                     windowed = complex_samples[-FFT_SIZE:] * window
                     spectrum = np.fft.fftshift(np.fft.fft(windowed))
                     magnitude_db = 20 * np.log10(np.abs(spectrum) + 1e-9)
-                    frame = _rebin(magnitude_db, OUTPUT_BINS).tobytes()
-                    self._broadcast(self._spectrum_subscribers, frame)
+
+                    if self._spectrum_subscribers:
+                        frame = _rebin(magnitude_db, OUTPUT_BINS).tobytes()
+                        self._broadcast(self._spectrum_subscribers, frame)
+
+                    if self._signal_detection_enabled:
+                        self._detect_signals(magnitude_db, sample_rate_hz)
 
                 for mode, subscribers in list(self._audio_subscribers.items()):
                     if not subscribers:
@@ -259,6 +282,26 @@ class _ReceiverCapture:
                     "header": header,
                     "event_name": describe_event(fields["event_code"]),
                     "location_names": [describe_location(loc) for loc in fields["locations"]],
+                },
+            )
+
+    def _detect_signals(self, magnitude_db: np.ndarray, sample_rate_hz: int) -> None:
+        assert self._peak_tracker is not None
+        current_bins = find_peak_bins(magnitude_db, self._signal_margin_db)
+        for bin_index in self._peak_tracker.filter_new(current_bins, time.monotonic()):
+            offset_hz = bin_to_frequency_offset_hz(bin_index, len(magnitude_db), sample_rate_hz)
+            frequency_hz = (
+                self._signal_center_frequency_hz + offset_hz
+                if self._signal_center_frequency_hz is not None
+                else None
+            )
+            self._event_bus.emit(
+                "SignalDetected",
+                source=self.receiver_id,
+                data={
+                    "frequency_hz": frequency_hz,
+                    "frequency_offset_hz": offset_hz,
+                    "power_db": float(magnitude_db[bin_index]),
                 },
             )
 
@@ -399,6 +442,27 @@ class StreamService:
             if capture is None:
                 return
             capture.disable_same()
+            await self._drop_if_idle(receiver_id)
+
+    async def enable_signal_detection(
+        self, receiver_id: str, margin_db: float, center_frequency_hz: int | None
+    ) -> None:
+        """Emits `SignalDetected` events (source=receiver_id) on the shared
+        EventBus whenever a new peak crosses `margin_db` above the FFT's
+        own estimated noise floor -- deliberately relative, not an
+        absolute dB value (see signal_detection.py's docstring for why:
+        the raw FFT scale isn't calibrated and shifts with gain). Same
+        idempotent/EventBus-based shape as `enable_aprs`/`enable_same`."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_signal_detection(margin_db, center_frequency_hz)
+
+    async def disable_signal_detection(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_signal_detection()
             await self._drop_if_idle(receiver_id)
 
     def is_active(self, receiver_id: str) -> bool:

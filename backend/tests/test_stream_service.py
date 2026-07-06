@@ -267,4 +267,68 @@ async def test_aprs_and_same_share_one_capture(client):
         assert "mock:0" in stream_service._captures  # SAME decoding keeps it alive
         await stream_service.disable_same("mock:0")
 
+
+async def test_enable_signal_detection_starts_and_stops_capture(client):
+    stream_service = app.state.stream_service
+
+    await stream_service.enable_signal_detection("mock:0", margin_db=15.0, center_frequency_hz=None)
+    assert "mock:0" in stream_service._captures
+
+    await asyncio.sleep(0.2)  # should run its detection loop over noise without crashing
+    assert "mock:0" in stream_service._captures
+
+    await stream_service.disable_signal_detection("mock:0")
     assert "mock:0" not in stream_service._captures
+
+
+async def test_signal_detection_and_spectrum_share_one_capture(client):
+    stream_service = app.state.stream_service
+
+    queue = await stream_service.subscribe_spectrum("mock:0")
+    await stream_service.enable_signal_detection("mock:0", margin_db=15.0, center_frequency_hz=None)
+    try:
+        assert len(stream_service._captures) == 1
+    finally:
+        await stream_service.disable_signal_detection("mock:0")
+        assert "mock:0" in stream_service._captures  # spectrum subscriber keeps it alive
+        await stream_service.unsubscribe_spectrum("mock:0", queue)
+
+    assert "mock:0" not in stream_service._captures
+
+
+async def test_signal_detected_event_reports_absolute_frequency():
+    """Exercises _detect_signals directly with a controlled synthetic
+    spectrum (the mock plugin's IQ is random noise, unsuitable for
+    asserting a specific peak/frequency), checking bin-to-frequency math
+    and event emission end to end."""
+    import numpy as np
+
+    capture = _ReceiverCapture("test:0", open_handle=None, loop=None, event_bus=None)
+    emitted = []
+
+    class _StubEventBus:
+        def emit(self, event_type, source, data):
+            emitted.append((event_type, source, data))
+
+    capture._event_bus = _StubEventBus()
+    capture.enable_signal_detection(margin_db=30.0, center_frequency_hz=100_000_000)
+
+    fft_size = 64
+    magnitude_db = np.full(fft_size, -80.0, dtype=np.float32)
+    magnitude_db[40] = -10.0  # a clear peak, 8 bins above center (32)
+
+    capture._detect_signals(magnitude_db, sample_rate_hz=240_000)
+
+    assert len(emitted) == 1
+    event_type, source, data = emitted[0]
+    assert event_type == "SignalDetected"
+    assert source == "test:0"
+    assert data["power_db"] == pytest.approx(-10.0)
+    expected_offset = (40 - fft_size / 2) * 240_000 / fft_size
+    assert data["frequency_offset_hz"] == pytest.approx(expected_offset)
+    assert data["frequency_hz"] == pytest.approx(100_000_000 + expected_offset)
+
+    # A second frame with the same peak (even drifted a bin) shouldn't re-trigger.
+    magnitude_db2 = magnitude_db.copy()
+    capture._detect_signals(magnitude_db2, sample_rate_hz=240_000)
+    assert len(emitted) == 1

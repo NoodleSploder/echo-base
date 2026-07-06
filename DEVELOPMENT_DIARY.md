@@ -2945,3 +2945,160 @@ consistency.
 3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
    hardware is available, or get real browser/audio verification once
    available.
+
+---
+
+# 2026-07-06 — Signal Detection / Peak Analysis (Phase 4)
+
+## Summary
+
+Added Phase 4's "Signal detection" / "Peak analysis" items: a
+`PeakTracker`/`find_peak_bins` module that finds distinct local maxima
+in the spectrum FFT already computed for every capture, emitting
+`SignalDetected` events (frequency + power) via the same EventBus
+pattern APRS/SAME use. Two real bugs were found and fixed by testing
+against the actual attached RTL-SDR rather than only synthetic data --
+both are worth reading in full below, since they're the kind of thing
+that looks correct in a unit test and falls over immediately on real
+hardware.
+
+## Motivation
+
+"Signal detection" and "Peak analysis" are two of the few remaining
+Phase 4 items that don't require new hardware or a browser to build
+and verify -- they're pure DSP on top of the spectrum FFT `_run()`
+already computes for every capture. A natural next slice given what's
+actually buildable/verifiable in this environment right now.
+
+## Features Added
+
+- `app/services/signal_detection.py`: `find_peak_bins` (local maxima
+  at least `margin_db` above the spectrum's own estimated noise
+  floor), `bin_to_frequency_offset_hz`, `PeakTracker` (bucket + cooldown
+  based re-trigger suppression), `estimate_noise_floor_db` (median
+  magnitude).
+- `StreamService`/`_ReceiverCapture`: `enable_signal_detection`/
+  `disable_signal_detection`, same idempotent/EventBus-emitting shape
+  as `enable_aprs`/`enable_same`. Computing the FFT is now gated on
+  `spectrum_subscribers OR signal_detection_enabled` (previously only
+  the former), since detection needs the same magnitude array spectrum
+  viewers do, whether or not anyone's watching the waterfall.
+- `POST /api/receivers/{id}/signal-detection/start` (`margin_db`,
+  default 15.0) / `.../stop`; `ReceiverCard` gained a margin input +
+  toggle, matching the APRS/SAME toggle pattern -- detections show up
+  in the Activity Feed/System Log automatically, no new widget needed.
+
+## Two real bugs, found live, not in a test
+
+**Bug 1: bin-tolerance re-trigger suppression was nowhere near
+enough.** The first implementation suppressed re-detecting "the same"
+peak by checking if it was within 2 bins of one seen last frame.
+Verified against the real attached RTL-SDR tuned to an FM broadcast
+frequency: one real carrier produced 606KB of `SignalDetected` events
+in 10 seconds. A real signal's peak bin wanders by far more than a
+couple of bins frame-to-frame (modulation, noise) -- this is exactly
+the kind of thing a unit test with a static synthetic spectrum would
+never catch, because the whole bug is about frame-to-frame *movement*.
+Fixed with `PeakTracker`: group bins into coarser buckets and cool
+each bucket down for 5 seconds after it triggers -- the same shape
+real scanner/signal-detect software uses.
+
+**Bug 2: absolute dB thresholds don't mean anything on this receiver's
+raw FFT scale.** Even after fixing the re-trigger bug, testing at
+`threshold_db=-20` produced 256 events in 10 seconds -- not a
+suppression bug this time, but genuinely ~128 distinct "peaks" across
+the whole band, because `20*log10(magnitude)` isn't calibrated to any
+physical reference and shifts entirely with gain: at the receiver's
+auto-gain setting, nearly the *entire* spectrum sat above -20dB.
+Confirmed by manually setting a low fixed gain (10) -- the same
+threshold then found *zero* peaks, since the whole scale had shifted
+down. The fix: `margin_db` is now relative to the spectrum's own
+estimated noise floor (median magnitude, robust to the few bins an
+actual signal occupies), not an absolute value. Re-tested at auto gain
+with `margin_db=15`: 6 detections in 10 seconds, clustered on a real
+adjacent FM station a few hundred kHz off the tuned frequency, with
+sane, physically plausible power readings. Both the API field and the
+`ReceiverCard` UI were renamed `threshold_db` -> `margin_db` to make
+this relative meaning explicit rather than implicit.
+
+## Architecture Decisions
+
+- **Peak-finding, tracking, and noise-floor estimation are pure
+  functions/a small stateful class in their own module**, same
+  reasoning as `dsp.py`: this is math that's easy to get subtly wrong,
+  and keeping it separate from `stream_service.py`'s threading means it
+  can be (and was) unit tested directly against controlled synthetic
+  spectra -- which is exactly what caught the noise-floor issue's
+  *fix* being correct, even though the original *bug* only showed up
+  live (synthetic single-peak spectra don't have the "everything is
+  bright" problem a real crowded band does).
+- **Relative (noise-floor-margin) threshold, not absolute.** This is
+  standard practice in real signal-detection/scanner software for
+  exactly the reason found here: raw FFT bin magnitude isn't a
+  calibrated physical quantity, so a fixed number only "works" for
+  whatever gain happened to be active when it was chosen.
+- **FFT computation for signal detection reuses the spectrum
+  subscriber's exact code path** (same window, same `FFT_SIZE`, same
+  per-read cadence) rather than a separate computation -- one
+  magnitude array serves both the waterfall and the detector when
+  both are active, matching the "one hardware claim, multiple
+  consumers" principle established by spectrum/audio/decoders.
+
+## Files Created / Modified
+
+- `backend/app/services/signal_detection.py` (new)
+- `backend/app/services/stream_service.py` -- `enable_signal_detection`/
+  `disable_signal_detection`, `_detect_signals`, FFT gating change.
+- `backend/app/schemas/receiver.py` -- `SignalDetectionRequest.margin_db`.
+- `backend/app/api/routes/receivers.py` -- signal-detection start/stop routes.
+- `backend/tests/test_signal_detection.py` (new) -- peak finding,
+  noise-floor estimation, cooldown/bucket suppression (including a
+  test asserting the *same* margin catches a peak regardless of the
+  spectrum's absolute dB scale -- the actual live-found bug, made
+  reproducible).
+- `backend/tests/test_stream_service.py` -- signal-detection lifecycle,
+  shared-capture-with-spectrum, and a direct `_detect_signals` test
+  with a controlled synthetic spectrum checking bin-to-frequency math.
+- `backend/tests/test_receivers.py` -- signal-detection start/stop via REST.
+- `frontend/src/api/receivers.ts`, `ReceiverCard.tsx` -- margin input + toggle.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 81/81 passing (75
+  previous + 10 new `test_signal_detection.py` cases including the
+  noise-floor-adaptive-threshold test, plus lifecycle/REST/enrichment
+  tests in the other files).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware, twice, finding two real bugs**: first pass (bin-
+  tolerance suppression) produced 606KB/10s of events against a real
+  FM carrier -- caught and fixed. Second pass (absolute threshold)
+  produced 256 events/10s at auto-gain, 0 events/10s at a manually-set
+  low gain with the same threshold -- caught and fixed by making the
+  threshold noise-floor-relative. Final re-verification at auto gain
+  with the fixed `margin_db=15`: 6 sane detections in 10 seconds,
+  correctly landing on a real adjacent FM station's frequency with
+  plausible power readings. No crashes, clean process lifecycle
+  throughout all three live runs.
+
+## Outstanding Work
+
+- Peak power readings are still on the receiver's raw uncalibrated
+  scale (now noise-floor-relative for detection purposes, but the
+  reported `power_db` in the event itself is still the absolute raw
+  value) -- fine for relative comparison, not a real dBm/dBFS figure.
+- No RF heat maps, occupancy analysis, signal history, or receiver
+  comparison yet -- Phase 4's other remaining items.
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps, tracked in `ROADMAP.md`.
+
+## Next Steps
+
+1. Consider signal history (logging detections over time) or occupancy
+   analysis (what fraction of the band is occupied) as the next Phase
+   4 items, now that peak detection exists to build on.
+2. Add an actual map view once a browser is available to verify
+   rendering.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.

@@ -225,15 +225,16 @@ Remaining
 
 # Phase 4 — Spectrum Intelligence
 
+Completed
+
+- Live waterfall / spectrum displays (real FFT data, `SpectrumMonitorWidget`/`ReceiverTileGridWidget`)
+- Signal detection / peak analysis (`SignalDetected` events: noise-floor-relative threshold, bucket+cooldown re-trigger suppression -- see `signal_detection.py`)
+
 Remaining
 
-- Live waterfall
-- Spectrum displays
 - Occupancy analysis
 - Signal history
 - RF heat maps
-- Signal detection
-- Peak analysis
 - Receiver comparison
 
 ---
