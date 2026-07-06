@@ -1,25 +1,24 @@
 """CRUD for saved receiver tuning presets, plus applying one to a live receiver."""
 from __future__ import annotations
 
-from dataclasses import asdict
-
 from fastapi import APIRouter, Depends
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_receiver_service, require_role
+from app.api.deps import get_current_user, get_receiver_service, get_stream_service, require_role
+from app.api.routes.receivers import _status_response
 from app.core.exceptions import NotFoundError
 from app.db.models.receiver_profile import ReceiverProfile
 from app.db.models.user import User, UserRole
 from app.db.session import get_db
 from app.schemas.common import ok
-from app.schemas.receiver import ReceiverStatusSchema
 from app.schemas.receiver_profile import (
     ReceiverProfileCreate,
     ReceiverProfileSchema,
     ReceiverProfileUpdate,
 )
 from app.services.receiver_service import ReceiverService
+from app.services.stream_service import StreamService
 
 router = APIRouter(prefix="/api/receiver-profiles", tags=["receiver-profiles"])
 
@@ -98,10 +97,11 @@ async def apply_profile(
     user: User = Depends(require_operator),
     db: AsyncSession = Depends(get_db),
     service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
 ) -> dict:
     profile = await _get_owned_profile(profile_id, user, db)
     await service.tune(receiver_id, profile.frequency_hz)
     if profile.gain is not None:
         await service.set_gain(receiver_id, profile.gain)
     status = await service.status(receiver_id)
-    return ok(ReceiverStatusSchema(**asdict(status)).model_dump())
+    return _status_response(status, receiver_id, stream_service)

@@ -1025,3 +1025,1683 @@ Frontend (`frontend/`):
    headless browser is available in this environment.
 4. Decide whether `start`/`stop` and spectrum subscription should share
    one underlying "is this receiver's hardware claimed" concept.
+
+---
+
+# 2026-07-06 — Receiver Picker and Live Audio Listening
+
+## Summary
+
+Two follow-ups from the previous entry's "Next Steps": added a
+receiver picker to the Spectrum Monitor widget, and -- the bigger
+piece -- a full live-audio path (`AudioService` + `/ws/audio`) so a
+receiver can actually be listened to in the browser, not just watched
+as a spectrum. Verified against the real attached RTL-SDR: audible-
+strength demodulated FM audio, not synthetic data.
+
+## Motivation
+
+Multi-receiver support was an explicit next step. Live audio wasn't
+directly named, but it was the obvious next real capability once IQ
+streaming existed (previous entry): a "Radio Operations Platform" that
+can show you a spectrum but not let you listen to it is missing the
+single most basic operator workflow, and `rtl_fm` (already alongside
+`rtl_sdr`/`rtl_test`) made it a small addition on top of the
+subprocess-streaming pattern `open_iq_stream` already established.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `ReceiverPlugin.open_audio_stream(receiver_id, mode="fm") ->
+  AudioStreamHandle` (`app/plugins/receiver.py`): same optional-capability
+  shape as `open_iq_stream` (a `Protocol` with `read`/`close`/
+  `sample_rate_hz`), but for demodulated mono PCM16 instead of raw I/Q.
+- `plugins/rtl_sdr/plugin.py`: implements it via `rtl_fm -d <index> -f
+  <freq> -M <mode> -s 200000 -r 48000 [-g <gain>] -`, mirroring
+  `open_iq_stream`'s use of `rtl_sdr`. The subprocess-wrapper class
+  (`_RtlSdrProcessStream`, renamed from `_RtlSdrIqStream`) is now
+  shared by both, since "read a subprocess's stdout until closed" is
+  identical for I/Q bytes and PCM bytes. Added `audio_streaming: True`
+  to the plugin's capability flags.
+- `app/services/audio_service.py` (`AudioService`): structurally the
+  same as `SpectrumService` (per-`(receiver_id, mode)` background
+  thread, lazy start on first subscriber, stop on last, thread-to-loop
+  handoff via `call_soon_threadsafe`) but with no signal processing --
+  the plugin already demodulated the audio, so this just re-chunks
+  bytes onto subscriber queues.
+- `GET /ws/audio/{receiver_id}?mode=fm` (`app/api/routes/audio.py`):
+  binary PCM16 chunks, same auth/close-code conventions as
+  `/ws/spectrum`. `mode` is validated against an allow-list
+  (`fm`/`wbfm`/`am`/`usb`/`lsb`/`raw`) before being passed to the
+  plugin, since it flows straight into subprocess arguments.
+
+Frontend (`frontend/`):
+
+- `useAudioPlayer(receiverId, mode, enabled)` (new hook): opens
+  `/ws/audio/{id}`, decodes each PCM16 chunk to float, and schedules it
+  on a single `AudioContext` back-to-back against a running
+  `nextStartTime` cursor -- what keeps ~50ms chunks arriving
+  separately over the wire sounding gapless instead of choppy.
+- `ReceiverCard` gained a mode selector (FM/AM/USB/LSB) and a
+  Listen/Connecting/Listening toggle, shown only when
+  `receiver.capabilities.audio_streaming` is true.
+- `useReceiverPicker` (renamed from `useFirstReceiver`, same file
+  renamed to match): now returns the full receiver list plus a
+  selection setter instead of always picking index 0.
+  `SpectrumMonitorWidget` shows a `<select>` when more than one
+  receiver is present; with only one, it behaves as before.
+
+## Architecture Decisions
+
+- **`_RtlSdrProcessStream` unified rather than duplicated** for audio:
+  once the second use case (audio) needed the exact same "spawn a CLI
+  tool, read its stdout, terminate on close" wrapper as the first (IQ),
+  keeping two copies would just be accidental duplication with no
+  behavioral difference.
+- **Audio capture is keyed by `(receiver_id, mode)`, not just
+  `receiver_id`.** Unlike the spectrum socket (one FFT makes sense per
+  receiver), a receiver could plausibly be listened to in different
+  demod modes by different observers (e.g. one client on USB for SSB
+  voice, another on AM for the same frequency's data mode); keying by
+  the pair means switching mode in the UI starts a fresh capture rather
+  than fighting over a shared one.
+- **Mode validated against an allow-list before reaching the plugin**,
+  since `Query` params reach `open_audio_stream` unfiltered otherwise
+  and (in the rtl_sdr plugin) get placed directly into subprocess
+  `argv`. `subprocess.Popen` without `shell=True` isn't injectable, but
+  an arbitrary string there is still an easy way to make `rtl_fm` fail
+  in confusing ways -- validating up front gives a clean 4400 instead.
+
+## Files Created / Modified
+
+- `backend/app/plugins/receiver.py` -- `AudioStreamHandle` protocol,
+  `ReceiverPlugin.open_audio_stream`.
+- `backend/app/plugins/__init__.py` -- exports `AudioStreamHandle`.
+- `backend/app/services/audio_service.py` (new)
+- `backend/app/api/routes/audio.py` (new), `backend/app/api/router.py`
+- `backend/app/api/deps.py` -- `get_audio_service`
+- `backend/app/main.py` -- constructs `AudioService`, stops it on shutdown.
+- `backend/tests/conftest.py` -- mock plugin gained `open_audio_stream`
+  (reuses `MockIqStream`).
+- `backend/tests/test_audio_service.py` (new)
+- `plugins/rtl_sdr/plugin.py` -- `open_audio_stream`,
+  `_RtlSdrProcessStream` rename, `audio_streaming` capability flag.
+- `frontend/src/hooks/useAudioPlayer.ts` (new)
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- mode
+  selector + Listen toggle.
+- `frontend/src/hooks/useReceiverPicker.ts` (renamed from
+  `useFirstReceiver.ts`) -- returns full list + selection setter.
+- `frontend/src/components/dashboard/SpectrumMonitorWidget.tsx` --
+  receiver `<select>` when multiple receivers are present.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 25/25 passing (22
+  previous + 3 new `test_audio_service.py` cases: subscribe yields a
+  non-empty PCM chunk from the mock plugin, last-unsubscribe tears the
+  worker down, unknown receiver raises `ReceiverNotFoundError`).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend again (briefly
+  interrupting its actual public-hostname traffic), then used a small
+  `websockets`-based script to log in and read raw chunks from
+  `ws://localhost:8811/ws/audio/rtl_sdr:00000001?mode=fm` against the
+  real attached RTL2838 dongle. Chunks had RMS ~5100-5300 (of a
+  possible 32768 max) with wide min/max swings -- clearly demodulated
+  signal, not silence or noise-floor static. Confirmed via backend
+  logs and `pgrep` that the `rtl_fm` subprocess is spawned on
+  subscribe and fully gone after the client disconnects, same
+  lazy-lifecycle behavior verified for `rtl_sdr`/spectrum previously.
+- No display/headless browser in this environment, so the actual
+  in-browser audio playback (`useAudioPlayer`'s `AudioContext`
+  scheduling) and the new receiver-picker `<select>` are unverified by
+  eye/ear -- only the underlying WebSocket data and build/lint/tests
+  are confirmed.
+
+## Outstanding Work
+
+- Only `rtl_sdr` implements `open_audio_stream`; future receiver
+  plugins need their own implementation for Listen to work.
+- No volume control, mute, or visual level meter on the Listen UI --
+  just a bare toggle and mode select.
+- `AudioContext` creation happens in a `useEffect` triggered by a
+  click, not directly in the click handler; this is fine in
+  Chrome/Firefox but Safari's stricter autoplay-gesture linking hasn't
+  been tested (no browser available here).
+- Still no browser-based visual/audible verification in this
+  environment.
+
+## Next Steps
+
+1. Verify actual audio playback and the receiver picker in a real
+   browser once one is available.
+2. Start Phase 3 (Radio Manager / Hamlib integration) or a first real
+   decoder (FT8/APRS) -- both spectrum and audio raw-data paths now
+   exist to build on.
+3. Add a level meter / mute control to the Listen UI.
+4. Decide whether `start`/`stop`, spectrum subscription, and now audio
+   subscription should share one underlying "is this receiver's
+   hardware claimed" concept -- three independent "streaming" notions
+   on one receiver is starting to accumulate.
+
+---
+
+# 2026-07-06 — Unified IQ Capture: One Hardware Claim, Not Two
+
+## Summary
+
+Resolved the design question from the previous entry -- specifically
+the concrete half of it, the actual bug: spectrum and audio each
+opened their own subprocess (`rtl_sdr`, `rtl_fm`) against the same
+physical dongle, so watching the Spectrum Monitor and hitting Listen
+on the same receiver at the same time raced for exclusive USB access.
+Replaced `SpectrumService` + `AudioService` with one `StreamService`
+that opens a single `open_iq_stream` per receiver and derives *both*
+the FFT and demodulated audio from those same samples in software.
+Verified on real hardware that spectrum and audio now genuinely run
+concurrently against one receiver with only one subprocess alive.
+
+## Motivation
+
+This was flagged as unresolved risk in both of the last two entries,
+not just a tidiness complaint: `rtl_sdr` (used by spectrum) and
+`rtl_fm` (used by audio) each try to open the same USB device
+exclusively. Two independent subprocesses per receiver meant the
+second one to start would fail silently (logged and swallowed by the
+worker's `except Exception` -- the user would just see "Connecting..."
+forever with no explanation). Fixing it meant giving up two
+independent, mode-flexible demod processes in favor of one shared
+capture and a real, if limited, software demodulator.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `app/services/dsp.py` (new): `fm_demodulate`/`am_demodulate` --
+  quadrature phase-difference FM demod and magnitude AM demod, each a
+  crude boxcar decimate (mean-pool, not a real FIR/IIR filter) down to
+  48kHz, then per-chunk AGC (normalize to a fixed target peak) before
+  quantizing to PCM16. Deliberately simple DSP: intelligible voice
+  audio, not broadcast-quality -- SSB (USB/LSB) demod needs a proper
+  Hilbert-transform phasing method and was left out rather than faked.
+- `app/services/stream_service.py` (new, replaces
+  `spectrum_service.py` + `audio_service.py`): one `_ReceiverCapture`
+  per receiver, opening exactly one `open_iq_stream`. Each read is fed
+  to the FFT path *and* to every currently-subscribed audio mode's
+  demodulator -- so N spectrum viewers and M audio listeners (in
+  possibly different modes) on one receiver still share one hardware
+  claim. Capture starts when the first subscriber of either kind
+  arrives and stops when the last of either kind leaves.
+  `subscribe_spectrum`/`unsubscribe_spectrum` and
+  `subscribe_audio`/`unsubscribe_audio` replace the two services'
+  separate APIs.
+- `ReceiverPlugin.open_audio_stream` and `AudioStreamHandle` removed
+  entirely from the plugin interface (`app/plugins/receiver.py`) --
+  audio is now a generic capability of anything that streams IQ, not
+  something each plugin implements separately.
+- `plugins/rtl_sdr/plugin.py`: `open_audio_stream`/`rtl_fm` subprocess
+  removed; `audio_streaming` capability flag removed (subsumed by
+  `iq_streaming`, since audio now comes free with it). Default IQ
+  sample rate lowered from 2.048 MHz to 240 kHz -- a deliberate
+  spectrum-span-for-decimation-simplicity tradeoff, since 240kHz/5 is
+  exactly 48kHz (the audio output rate), so the common case needs no
+  fractional resampling. Still adjustable via the existing
+  `set_sample_rate` API; audio decimation recalculates
+  (`round(sample_rate_hz / 48000)`) whatever rate is actually set.
+- `/ws/audio/{id}?mode=` now validates against
+  `dsp.DEMODULATORS` (`fm`, `am`) instead of a hardcoded allow-list
+  that included unimplemented `rtl_fm` modes (`wbfm`/`usb`/`lsb`/`raw`).
+
+Frontend (`frontend/`):
+
+- `ReceiverCard`'s Listen UI now checks `capabilities.iq_streaming`
+  instead of a separate `audio_streaming` flag, and its mode dropdown
+  is trimmed to `["fm", "am"]` to match what the backend can actually
+  demodulate.
+
+## Architecture Decisions
+
+- **One capture serves both features rather than two specialized
+  ones.** The alternative (a mutex/lease so only one of
+  spectrum/audio could run at a time on a given receiver) would have
+  "fixed" the crash but made the platform *less* capable -- an
+  operator legitimately wants to watch the waterfall while listening.
+  Deriving both from one IQ stream in software is strictly better once
+  the DSP is acceptable, which FM/AM (unlike SSB) are simple enough for.
+- **Software demod chosen over process-per-mode**, even though it
+  means writing (simple) DSP instead of shelling out to a
+  battle-tested tool. `rtl_fm` can't share its input stream with
+  `rtl_sdr` -- there's no way to keep the "just shell out" approach
+  and also share one hardware claim, so this was the one place in the
+  project so far where reimplementing instead of wrapping a CLI tool
+  was the only option that solved the actual problem.
+- **240kHz default sample rate is a real behavior change, not free.**
+  The Spectrum Monitor's span narrows from ~2MHz to 240kHz by default.
+  This was accepted deliberately: a wide spectrum overview was never
+  wired to real data anyway (`SpectrumOverviewWidget` stays sample-only
+  per the entry that built it), and 240kHz is still enough span for
+  the per-receiver Spectrum Monitor's actual use case (watching a
+  channel you're tuned near), while being the cleanest possible ratio
+  to 48kHz audio.
+- **`_ReceiverCapture.is_idle()` checks both subscriber collections**,
+  so the capture is only torn down when *neither* spectrum nor any
+  audio mode has a subscriber left -- getting this wrong (e.g. tearing
+  down on spectrum's last unsubscribe while audio listeners remain)
+  would have silently killed someone's audio to fix someone else's
+  disconnect.
+
+## Files Created / Modified
+
+- `backend/app/services/dsp.py` (new), `backend/app/services/stream_service.py`
+  (new) -- replace `spectrum_service.py`/`audio_service.py` (deleted).
+- `backend/app/plugins/receiver.py`, `backend/app/plugins/__init__.py`
+  -- removed `AudioStreamHandle`/`open_audio_stream`.
+- `backend/app/main.py`, `backend/app/api/deps.py` -- `StreamService`
+  replaces the two removed services.
+- `backend/app/api/routes/spectrum.py`, `backend/app/api/routes/audio.py`
+  -- delegate to `StreamService`; audio route validates modes against
+  `dsp.DEMODULATORS`.
+- `backend/tests/conftest.py` -- mock plugin's `open_audio_stream`
+  removed (no longer part of the interface).
+- `backend/tests/test_stream_service.py` (new, replaces
+  `test_spectrum_service.py` + `test_audio_service.py`).
+- `plugins/rtl_sdr/plugin.py` -- `open_audio_stream` removed, default
+  sample rate 240kHz, `_RtlSdrProcessStream` reverted to
+  `_RtlSdrIqStream` (only one subprocess kind now, so the shared-name
+  generalization from the previous entry was no longer needed).
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- capability
+  check and mode list updated.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 25/25 passing, including
+  a new `test_spectrum_and_audio_share_one_capture` that asserts
+  exactly one `_ReceiverCapture` exists while both a spectrum and an
+  audio subscriber are attached to the same mock receiver, and that
+  it survives the spectrum subscriber leaving while the audio
+  subscriber remains.
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings);
+  `tsc -b && vite build` clean.
+- **Real hardware, the actual regression test**: restarted the live
+  backend, then ran a script that opens `/ws/spectrum/...` and
+  `/ws/audio/...?mode=fm` *concurrently* against the same physical
+  RTL2838 dongle (`asyncio.gather`, not sequential) -- exactly the
+  scenario that used to race. Both streamed real data simultaneously
+  (spectrum peaks ~26-27dB, audio RMS ~8500-9200). Confirmed via `ps`
+  that only one `rtl_sdr` subprocess existed the whole time and no
+  `rtl_fm` process ever appeared. Also incidentally verified
+  multi-client sharing: a real external dashboard connection was
+  already subscribed to spectrum when the test script connected, and
+  the test's audio subscription joined the same running capture
+  without spawning a new one (no second "Opened IQ stream" log line).
+- No display/headless browser in this environment, so actual in-browser
+  audio quality (does the FM/AM demod sound acceptable, does switching
+  modes in the UI work smoothly) remains unverified by ear.
+
+## Outstanding Work
+
+- SSB (USB/LSB) demod is not implemented -- would need a proper
+  Hilbert-transform phasing demodulator, not a small addition like
+  FM/AM were.
+- The decimation filter is a boxcar mean, not a real low-pass FIR --
+  adequate for narrowband voice, would alias more on wider/noisier
+  signals. Worth revisiting if audio quality complaints show up once
+  someone can actually listen.
+- The smaller half of the original design question remains open:
+  `ReceiverStatus.state` (idle/streaming, toggled by `start`/`stop`)
+  still doesn't reflect whether a capture is actually running --
+  spectrum/audio subscription works regardless of whether `start` was
+  ever called. Whether `state` should become derived from
+  `StreamService` rather than a separate manual flag is still an open
+  question, just no longer a correctness bug.
+- Still no browser-based visual/audible verification in this
+  environment.
+
+## Next Steps
+
+1. Get real browser/audio verification once available in this
+   environment.
+2. Decide whether `ReceiverStatus.state` should be derived from
+   `StreamService`'s active captures instead of toggled independently
+   by `start`/`stop`.
+3. Start Phase 3 (Radio Manager / Hamlib integration) or a first real
+   decoder (FT8/APRS) on top of the now-unified IQ path.
+4. Consider a real low-pass FIR before decimation if boxcar-filter
+   audio quality turns out to be a problem in practice.
+
+---
+
+# 2026-07-06 — Receiver Status Reflects Real Capture Activity
+
+## Summary
+
+Closed the remaining half of the design question from the last two
+entries: `ReceiverStatus.state` was a manual flag toggled by
+`start()`/`stop()` that had no idea whether IQ was actually flowing.
+The REST layer now reports `"streaming"` whenever `StreamService` has
+a live capture for that receiver -- from a spectrum viewer, an audio
+listener, or both -- regardless of whether anyone ever called
+`/start`. Verified against the real receiver: `idle` -> `streaming` ->
+`idle` tracked a spectrum WebSocket's connect/disconnect with no
+`/start` call in between.
+
+## Motivation
+
+The previous entry fixed the actual bug (two subprocesses racing for
+one dongle) but left the cosmetic half open: an operator could open
+the Spectrum Monitor, see real data, and the receiver's own status
+badge would still say "idle" because `start()` was never called. That
+is actively misleading for something calling itself an operations
+platform -- a status field that doesn't reflect the thing it claims to
+describe is worse than not having the field.
+
+## Features Added
+
+- `StreamService.is_active(receiver_id) -> bool`
+  (`app/services/stream_service.py`): whether a capture currently
+  exists for a receiver, i.e. whether IQ is genuinely being read from
+  hardware.
+- `app/api/routes/receivers.py`: new `_status_response()` helper used
+  by every route that returns a `ReceiverStatusSchema` (status, start,
+  stop, tune, gain, bandwidth, sample-rate) -- upgrades a plugin-reported
+  `"idle"` to `"streaming"` when `StreamService.is_active()` is true.
+  Only overrides `"idle"`; a plugin-reported `"error"` or
+  `"disconnected"` is left alone, since those describe conditions no
+  amount of spectrum-watching should paper over.
+  `app/api/routes/receiver_profiles.py`'s `apply` endpoint reuses the
+  same helper for consistency.
+
+## Architecture Decisions
+
+- **Merged at the API layer, not inside `ReceiverService`.**
+  `ReceiverService` is constructed before `StreamService` in
+  `main.py`'s lifespan (`StreamService` depends on it for plugin
+  lookup), so giving `ReceiverService` a reference back to
+  `StreamService` would be circular. Doing the merge once, in the
+  route layer, avoids that entirely and keeps both services ignorant
+  of each other beyond the existing `resolve_plugin` call.
+  `_status_response()` was pulled out as a shared helper specifically
+  so this logic lives in exactly one place rather than being
+  copy-pasted across six routes.
+- **Only `"idle"` is upgraded, not any other state.** The point is
+  "don't lie about whether hardware is idle when it demonstrably
+  isn't" -- it is not "let spectrum-watching mask real errors."
+
+## Files Created / Modified
+
+- `backend/app/services/stream_service.py` -- `is_active()`
+- `backend/app/api/routes/receivers.py` -- `_status_response()` helper,
+  `stream_service` dependency added to every status-returning route.
+- `backend/app/api/routes/receiver_profiles.py` -- `apply` reuses the
+  shared helper instead of building its own `ReceiverStatusSchema`.
+- `backend/tests/test_receivers.py` -- new
+  `test_status_reflects_real_capture_without_start`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 26/26 passing (25
+  previous + 1 new test asserting `GET /api/receivers/mock:0` reports
+  `idle` before subscribing, `streaming` while a spectrum subscriber
+  is attached with no `/start` call, and `idle` again after
+  unsubscribing).
+- Frontend: unaffected by this change (no frontend edits); `npm run
+  lint` and `tsc -b && vite build` re-confirmed clean anyway.
+- **Real hardware**: restarted the live backend, then scripted
+  `GET /api/receivers/rtl_sdr:00000001` before, during, and after a
+  spectrum WebSocket connection (never calling `/start`). Output:
+  `idle` -> `streaming` -> `idle`, matching the mock-based test
+  exactly.
+
+## Outstanding Work
+
+- `start()`/`stop()` on rtl_sdr remain pure status-flag toggles with
+  no hardware effect of their own -- they're now one of two ways
+  `state` can say "streaming" (the other being real capture activity),
+  which is a bit of an odd pairing but not incorrect. Whether `start`
+  should be deprecated/removed now that subscribing already
+  auto-starts a capture is an open question, not urgent.
+- Same DSP/SSB/browser-verification gaps as the previous entry.
+
+## Next Steps
+
+1. Consider whether `start`/`stop` still pull their weight now that
+   spectrum/audio subscription auto-starts a capture regardless.
+2. Start Phase 3 (Radio Manager / Hamlib integration) or a first real
+   decoder (FT8/APRS) on the unified IQ path.
+3. Get real browser/audio verification once available in this
+   environment.
+
+---
+
+# 2026-07-06 — Audio Level Meter and Squelch
+
+## Summary
+
+Closed the "Add a level meter / mute control to the Listen UI" item
+flagged as outstanding since the audio-listening entry. `ReceiverCard`
+now shows a live RMS level bar while listening and a squelch slider
+that mutes playback below a threshold -- computed entirely client-side
+from the PCM16 chunks already flowing over `/ws/audio`, no backend
+changes needed.
+
+## Motivation
+
+Live audio without any level feedback or squelch is hard to use in
+practice -- there's no way to tell if a channel is quiet-but-connected
+versus dead, and there's no way to avoid constant static/noise between
+transmissions on a simplex channel. Both are standard baseline
+features on any real scanner/radio, and both turned out to be pure
+client-side signal processing on data already being received, not a
+new capability the backend needed to provide.
+
+## Features Added
+
+- `useAudioPlayer` (`frontend/src/hooks/useAudioPlayer.ts`) now takes
+  a `squelch` (0-1 RMS threshold) argument and returns `level` in
+  addition to `connected`. Every incoming PCM16 chunk's RMS is
+  computed client-side; chunks below `squelch` update the level meter
+  but are not scheduled for playback (silently skipped rather than
+  played at zero volume, so the `AudioContext` scheduling cursor
+  doesn't drift from real time waiting on gaps).
+- `ReceiverCard` gained a level meter (a width-animated bar, amber
+  "squelched" label when below threshold) and a squelch range slider,
+  shown only while `listening` is on.
+
+## Architecture Decisions
+
+- **Squelch and level computation live entirely in the browser, not
+  the backend.** The backend already streams every PCM sample
+  regardless of level -- there's no bandwidth or CPU reason to push
+  squelch logic server-side, and keeping it client-side means the
+  threshold is instantly adjustable (a slider drag) with no round
+  trip, and per-listener (two people watching the same receiver could
+  in principle want different squelch levels, though the UI doesn't
+  expose per-listener anything else either).
+- **`squelch` is read via a ref inside the WebSocket effect, not a
+  `useEffect` dependency.** Reconnecting the socket every time the
+  user drags the slider would be wasteful and would audibly glitch
+  playback; the same ref-for-frequently-changing-value pattern
+  `SpectrumCanvas`'s `liveFrame` prop already uses.
+- **Squelched chunks are dropped, not scheduled silent.** Scheduling a
+  silent `AudioBufferSourceNode` still advances `nextStartTime` by the
+  chunk's duration, which is harmless either way here since chunks
+  arrive at a roughly constant cadence -- but dropping the chunk
+  entirely also skips the (tiny but nonzero) cost of building the
+  `AudioBuffer` and scheduling it, for chunks nobody will hear anyway.
+
+## Files Created / Modified
+
+- `frontend/src/hooks/useAudioPlayer.ts` -- `squelch` param, `level`
+  return value, per-chunk RMS computation.
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- level meter
+  + squelch slider UI.
+
+## Verification
+
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- Backend unaffected (no backend files touched this entry); `ruff
+  check .` and `pytest` (26/26) re-confirmed clean anyway.
+- **Not verified by ear/eye**: this entry's actual behavior (does the
+  meter track real audio level, does squelch audibly gate static)
+  can only be confirmed by running the app in a real browser with
+  sound, which remains unavailable in this environment. The
+  `chunkRms`/squelch-gating logic was verified by reading it, not by
+  observing it work -- flagged here rather than glossed over.
+
+## Outstanding Work
+
+- Same as prior entries: no display/headless browser available, so
+  this feature -- more than most, since it's inherently about audible
+  behavior -- is unverified beyond code review and type-checking.
+- No persistence of squelch/mode preference per receiver; resets on
+  page reload.
+
+## Next Steps
+
+1. Get real browser/audio verification once available in this
+   environment -- overdue across several entries now.
+2. Start Phase 3 (Radio Manager / Hamlib integration) or a first real
+   decoder (FT8/APRS) on the unified IQ path.
+3. Consider whether `start`/`stop` still pull their weight now that
+   spectrum/audio subscription auto-starts a capture regardless.
+
+---
+
+# 2026-07-06 — First Real Decoder: APRS (AFSK1200/AX.25)
+
+## Summary
+
+Built Echo Base's first actual digital-mode decoder: a from-scratch
+Bell 202 AFSK1200 demodulator and AX.25 frame parser, running on the
+same unified IQ capture spectrum/audio already share. Enabling "Decode
+APRS" on a receiver runs FM-demodulated audio through the decoder;
+valid packets are emitted as `AprsPacket` events on the existing event
+bus, so the Activity Feed, System Log, and (now) the Messaging
+Center's APRS tab all show real decoded traffic automatically, no new
+frontend plumbing beyond the toggle button itself. Correctness is
+proven by a synthetic encode-then-decode round-trip test, since real
+APRS reception depends on RF conditions this environment doesn't
+control.
+
+## Motivation
+
+This was the next step named in the last two entries: "start Phase 3
+or a first real decoder" on top of the unified IQ path. APRS (AFSK1200
+over FM) was chosen over FT8 because it's a genuinely tractable
+from-scratch implementation -- AFSK demod plus HDLC framing is well
+within reach; FT8's LDPC decoding and multi-second sync search is a
+much larger undertaking better suited to wrapping an existing decoder
+than reimplementing.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `app/services/decoders/ax25.py`: AX.25 address encode/decode, FCS
+  (CRC-16/X-25) computation and verification, frame parsing
+  (destination/source/digipeater path/control/PID/info).
+- `app/services/decoders/afsk.py` (`Afsk1200Decoder`): correlates
+  audio against 1200Hz/2200Hz tones over a sliding one-bit-period
+  window to get a continuous tone-dominance signal; NRZI-decodes bits
+  by comparing tone polarity at consecutive bit centers (a transition
+  is a 0-bit, no transition is a 1-bit); brute-forces a handful of
+  bit-phase offsets per buffer (real bit-period start isn't known in
+  advance) and self-rejects wrong ones via HDLC bit-stuffing (6
+  consecutive 1-bits can't occur in real destuffed data, so garbage
+  phase-offsets essentially never produce a valid flag+FCS).
+- `dsp.py`: `fm_demodulate` split into `fm_discriminator` (raw float
+  audio, pre-AGC/quantization) + a thin PCM16 wrapper, since the AFSK
+  decoder needs the actual waveform, not a volume-normalized copy.
+- `StreamService`/`_ReceiverCapture`: `enable_aprs`/`disable_aprs`,
+  same lazy lifecycle and `is_idle()` accounting as spectrum/audio
+  subscribers (a receiver with only APRS decoding enabled still counts
+  as "in use" and keeps the capture alive). Decoded frames are handed
+  to `EventBus.emit("AprsPacket", ...)` rather than a dedicated
+  WebSocket -- there's no reason to build a fourth channel when
+  `/ws/events` already exists and already fans out to every dashboard
+  widget that cares about "things happened."
+- `POST /api/receivers/{id}/aprs/start` / `/aprs/stop`
+  (`app/api/routes/receivers.py`): toggles decoding for a receiver.
+
+Frontend (`frontend/`):
+
+- `ReceiverCard` gained a "Decode APRS" toggle (next to Listen).
+- `MessagingCenterWidget`'s APRS tab now shows real `AprsPacket` events
+  (filtered from the same event stream `ActivityFeedWidget`/
+  `SystemLogWidget` already consume) when any exist, falling back to
+  sample data otherwise -- same un-mocking pattern as
+  `ReceiversPanelWidget` earlier.
+
+## Architecture Decisions
+
+- **Decoded packets go through the existing EventBus, not a new
+  per-receiver WebSocket.** Spectrum and audio needed dedicated binary
+  channels because they're high-frequency numeric streams; APRS
+  packets are sparse, structured, and exactly the kind of thing
+  `/ws/events` already exists for. Reusing it means three dashboard
+  widgets got real APRS data for the cost of one filter (`event.type
+  === "AprsPacket"`), not three new integrations.
+- **Correctness proven by a synthetic round-trip test
+  (`test_afsk_decoder.py`), not live reception.** A from-scratch modem
+  implementation is exactly the kind of code that's easy to get
+  subtly wrong (bit order, NRZI polarity, stuffing edge cases) in ways
+  that only show up as "never decodes anything" -- which looks
+  identical to "correctly decoding, but no APRS traffic is in range."
+  Encoding a known packet to audio and asserting the decoder recovers
+  it exactly is the only way to actually distinguish those two cases
+  in an environment that can't guarantee real RF activity.
+- **No clock-recovery PLL -- fixed samples-per-bit, brute-forced
+  phase.** A real implementation (e.g. direwolf) continuously tracks
+  the transmitter's bit clock via a PLL to handle long frames and
+  clock drift. Given 1200 baud and typical APRS packet durations
+  (~200-300ms), a fixed nominal bit period is accurate enough that
+  drift never accumulates to a full bit's worth of error within one
+  packet -- a deliberate scope cut, not an oversight, and called out
+  as a real limitation below.
+- **APRS decoding is a capture-level toggle (enable/disable), not a
+  per-connection WebSocket subscription** like spectrum/audio.
+  Decoded output isn't per-client (everyone sees the same event bus),
+  so there's no reason to ref-count "how many people are watching
+  APRS" the way spectrum/audio ref-count actual data subscribers --
+  just whether decoding is on for that receiver.
+
+## Files Created / Modified
+
+- `backend/app/services/decoders/__init__.py`,
+  `backend/app/services/decoders/ax25.py`,
+  `backend/app/services/decoders/afsk.py` (all new)
+- `backend/app/services/dsp.py` -- `fm_discriminator` extracted from
+  `fm_demodulate`.
+- `backend/app/services/stream_service.py` -- `enable_aprs`/
+  `disable_aprs`, `_decode_aprs`, `EventBus` now a constructor
+  dependency.
+- `backend/app/main.py` -- `StreamService(receiver_service, event_bus)`.
+- `backend/app/api/routes/receivers.py` -- `aprs/start`, `aprs/stop`.
+- `backend/tests/test_afsk_decoder.py` (new) -- synthetic round-trip
+  test with a self-contained test-only AFSK1200 encoder.
+- `backend/tests/test_stream_service.py` -- APRS enable/disable
+  lifecycle tests, including sharing a capture with a spectrum
+  subscriber.
+- `frontend/src/api/receivers.ts` -- `startAprsDecoding`/`stopAprsDecoding`.
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- toggle button.
+- `frontend/src/components/dashboard/MessagingCenterWidget.tsx` --
+  real APRS data when available.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 30/30 passing, including
+  `test_afsk_round_trip_recovers_known_packet` (encodes a known AX.25
+  UI frame -- `APRS>N0CALL:>Test packet 12345` -- as an AFSK1200
+  waveform, feeds it to `Afsk1200Decoder`, and asserts the decoded
+  destination/source/info match exactly) and the new APRS
+  enable/disable/shared-capture lifecycle tests.
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, tuned the actual
+  RTL2838 dongle to 144.390 MHz (the standard North American APRS
+  frequency), enabled APRS decoding via the real REST endpoint, and
+  listened on `/ws/events` for 20 seconds. Zero packets decoded --
+  expected and honestly reported, not a bug: there's no way to
+  guarantee real APRS traffic is within range of whatever antenna is
+  attached in this environment. No crash, no exception in the backend
+  log, `aprs/start`/`aprs/stop` both returned 200, and the capture
+  process behaved identically to the spectrum/audio verifications
+  from prior entries. The synthetic round-trip test remains the actual
+  proof of correctness; this run only confirms the live wiring doesn't
+  break.
+
+## Outstanding Work
+
+- Never verified against real over-the-air APRS traffic -- only
+  synthetically. If someone runs this near an actual APRS digipeater
+  or nearby station, that would be the next real test.
+- No clock-recovery PLL, as noted above -- fine for single-packet
+  decode at nominal rates, would need real timing recovery for
+  anything longer or more clock-drift-sensitive.
+- Only FM-modulated AFSK1200 is supported (standard VHF APRS); HF APRS
+  (300 baud) and any other AX.25-based mode would need their own baud
+  rate / tone-frequency constants at minimum.
+- `MessagingCenterWidget`'s non-APRS tabs (Winlink, JS8Call, etc.)
+  remain sample data, same as before.
+- Same browser-verification gap as recent entries.
+
+## Next Steps
+
+1. Verify against real APRS traffic if this environment ever has
+   working antenna access to an active area.
+2. Consider a proper PLL-based clock recovery if longer/noisier
+   frames turn out to need it in practice.
+3. Start Phase 3 (Radio Manager / Hamlib) or a second decoder (e.g.
+   NOAA weather radio SAME, or a much larger undertaking, FT8).
+4. Get real browser/audio verification once available in this
+   environment.
+
+---
+
+# 2026-07-06 — Second Decoder: NOAA Weather Radio SAME
+
+## Summary
+
+Added a second real digital-mode decoder -- NOAA Weather Radio SAME
+(Specific Area Message Encoding, the format behind weather/emergency
+alert bursts) -- reusing the same phase-offset-brute-force FSK
+demodulation approach the APRS decoder established, wired to the
+previously-sample-only Alerts widget. Along the way, hit and fixed a
+real DSP bug that the APRS decoder's tone spacing had gotten lucky
+enough to not expose: SAME's mark/space tones are separated by
+*exactly* the baud rate, which is close to a worst-case for the
+unwindowed matched-filter approach `afsk.py` uses -- fixed by adding a
+Hann window to the correlation kernels, taking the synthetic
+round-trip test from ~74% bit accuracy (useless) to 695/696.
+
+## Motivation
+
+The previous entry named this as a next step. Chose SAME over Radio
+Manager/Hamlib for the same reason APRS was chosen over FT8 last time:
+it's the tractable option given what's actually available to build and
+verify against in this environment -- no serial/CAT-capable
+transceiver is attached here (checked: no `/dev/ttyUSB*`/`/dev/ttyACM*`,
+no `rigctl`), so a Radio Manager subsystem couldn't be verified against
+real hardware the way every feature so far has been. SAME reuses the
+already-verified RTL-SDR receive path instead.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `app/services/decoders/same.py` (`SameDecoder`): direct (non-NRZI)
+  FSK demod -- mark=2083.3Hz is literally bit "1", space=1562.5Hz is
+  bit "0", no transition-comparison needed, simpler than AX.25 in that
+  respect. Frame sync requires a run of >=8 preamble bytes (0xAB) at a
+  given phase offset before trusting it (the analogue of AX.25's
+  bit-stuffing self-rejection), then extracts the ASCII "ZCZC-...-"
+  header via `parse_same_header` (originator, event code, location
+  codes, purge time, timestamp, station ID).
+- `StreamService`/`_ReceiverCapture`: `enable_same`/`disable_same`,
+  identical lazy-lifecycle shape to `enable_aprs`/`disable_aprs` --
+  same capture, same `is_idle()` accounting, decoded alerts emitted as
+  `SameAlert` events on the shared EventBus.
+- `POST /api/receivers/{id}/same/start` / `/same/stop`.
+
+Frontend (`frontend/`):
+
+- `ReceiverCard` gained a "Decode SAME" toggle alongside "Decode APRS".
+- `AlertsWidget` now shows real `SameAlert` events (with a small
+  event-code -> severity mapping, e.g. TOR/EWW/FFW/EAN as critical,
+  RWT/RMT test codes as info, everything else as warning) when any
+  exist, falling back to sample data otherwise -- same pattern as
+  `MessagingCenterWidget`'s APRS tab.
+
+## The bug: tone spacing exactly equal to baud rate
+
+SAME's mark/space tones are 2083.3Hz and 1562.5Hz -- separated by
+520.8Hz, which is (by design, per the SAME spec) exactly the 520.83
+baud symbol rate. A matched-filter correlator's frequency resolution is
+roughly 1/(window duration); with a one-symbol-period rectangular
+window, that resolution is *also* about 520Hz -- meaning the two tones
+sit almost exactly one filter-bin apart, the worst practical case for
+a rectangular window's sidelobe leakage. The synthetic round-trip test
+caught it immediately: the initial unwindowed implementation decoded
+roughly 74% of bits correctly (i.e., useless -- worse than the
+self-rejection logic could route around). Applying a Hann window to
+the same four correlation kernels (mark/space x cos/sin) suppresses
+those sidelobes at the cost of a slightly wider main lobe, and took
+the same test to 695/696 bits correct.
+
+AFSK1200 (APRS)'s tones are 1000Hz apart against a coarser ~1200Hz
+window resolution -- enough margin that the unwindowed version worked
+fine there. This was worth writing down: the *same* demodulation
+technique needs different treatment depending on how tight the tone
+spacing is relative to the symbol rate, and it's not obvious from the
+code alone why one decoder needs a window and the other doesn't
+without this context.
+
+## Architecture Decisions
+
+- **Direct FSK (no NRZI) made `SameDecoder` simpler than
+  `Afsk1200Decoder`, not shared with it.** The two protocols encode
+  bits fundamentally differently (SAME: tone *is* the bit; AX.25: tone
+  *change* is the bit), so despite both being "FSK demod + phase-offset
+  brute force," a shared base class would have had to parameterize
+  around that difference for little benefit -- two small, independently
+  readable modules seemed better than one with a branch in the middle.
+- **`SameDecoder`'s self-rejection is "require N preamble bytes",
+  not bit-stuffing.** SAME has no bit-stuffing (it's not HDLC), so the
+  AX.25 decoder's rejection mechanism doesn't apply; requiring a
+  genuine run of `0xAB` bytes plays the same role -- garbage from a
+  wrong phase offset essentially never produces 8+ consecutive correct
+  preamble bytes by chance.
+- **Same "enable/disable is a capture-level toggle, not a
+  per-connection subscription" choice as APRS**, for the same reason:
+  decoded alerts aren't per-client data, they go out on the shared
+  event bus.
+
+## Files Created / Modified
+
+- `backend/app/services/decoders/same.py` (new)
+- `backend/app/services/stream_service.py` -- `enable_same`/
+  `disable_same`, `_decode_same`.
+- `backend/app/api/routes/receivers.py` -- `same/start`, `same/stop`.
+- `backend/tests/test_same_decoder.py` (new) -- synthetic round-trip
+  test with a fractional-sample-accurate test-only SAME/AFSK encoder
+  (an integer-samples-per-bit encoder was tried first and produced a
+  full bit period of drift over a ~700-bit message -- fixed by tracking
+  a running cursor instead of truncating per bit, same principle as
+  the decoder's own timing).
+- `backend/tests/test_stream_service.py` -- SAME enable/disable and
+  shared-capture-with-APRS lifecycle tests.
+- `frontend/src/api/receivers.ts` -- `startSameDecoding`/`stopSameDecoding`.
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- SAME toggle.
+- `frontend/src/components/dashboard/AlertsWidget.tsx` -- real SAME
+  alert data.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 34/34 passing, including
+  `test_same_round_trip_recovers_known_header` (encodes a known SAME
+  header as an actual FSK waveform, decodes it, asserts exact
+  recovery) and SAME enable/disable/shared-capture lifecycle tests
+  (including sharing one capture with APRS decoding simultaneously).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, tuned the real
+  RTL2838 dongle to 162.400 MHz (a standard NOAA Weather Radio
+  channel), enabled SAME decoding via the real REST endpoint, listened
+  on `/ws/events` for 20 seconds. Zero alerts decoded -- expected and
+  reported honestly, same as the APRS entry's live test: there's no
+  guarantee of an active NOAA transmitter (or any RF signal at all) in
+  range of whatever antenna is attached here, and SAME headers are
+  only broadcast periodically/on actual alerts, not continuously. No
+  crash, clean `rtl_sdr` process start/stop. The synthetic round-trip
+  test is the real correctness proof, as with APRS.
+
+## Outstanding Work
+
+- Never verified against a real over-the-air SAME broadcast -- only
+  synthetically, same caveat as APRS.
+- No PLL-based clock recovery, same limitation as the APRS decoder
+  (fixed nominal bit period, fine for one message's duration at this
+  baud rate).
+- `parse_same_header` doesn't map location (FIPS) codes or event codes
+  to human-readable names -- `AlertsWidget` shows raw codes plus a
+  small severity guess, not "Los Angeles County, Tornado Warning."
+- Same browser-verification gap as recent entries.
+
+## Next Steps
+
+1. Verify against real SAME/APRS traffic if this environment ever has
+   working antenna access to an active area.
+2. Add FIPS location code and event code -> human-readable name
+   lookup tables for `AlertsWidget`.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available to verify against, or a third decoder.
+4. Get real browser/audio verification once available in this
+   environment -- now overdue across several entries.
+
+---
+
+# 2026-07-06 — Human-Readable SAME Event/Location Codes
+
+## Summary
+
+Closed the "Add FIPS location code and event code -> human-readable
+name lookup tables" item from the previous entry. `AlertsWidget` now
+shows real alerts as "Tornado Warning" / "County 037, California"
+instead of raw `TOR` / `006037` codes, resolved backend-side so the
+lookup tables live in one place rather than being duplicated in the
+frontend.
+
+## Motivation
+
+Named directly in the previous entry's outstanding-work list: showing
+raw SAME codes in a dashboard widget meant to be human-facing wasn't
+really finished. Event codes and state FIPS codes are small, stable,
+official tables, so filling them in was a well-scoped, low-risk
+addition -- unlike the ~3,200-entry county FIPS database, which was
+deliberately left as a numeric code (see below) rather than guessed at
+partially.
+
+## Features Added
+
+- `backend/app/services/decoders/same_codes.py` (new):
+  `EVENT_CODES` (the ~50 official NWS/EAS SAME event codes -> full
+  names), `STATE_FIPS` (all 50 states + DC + territories), and
+  `SUBDIVISION_NAMES` (a location code's leading digit -- county
+  quadrant, e.g. "Northwest"). `describe_event()` and
+  `describe_location()` wrap these with a raw-code fallback for
+  anything not in the table.
+- `StreamService._decode_same` now adds `event_name` and
+  `location_names` (a list, one per SAME location code in the alert)
+  to the `SameAlert` event payload alongside the existing raw fields.
+- `AlertsWidget` displays `event_name`/`location_names` instead of the
+  raw `event_code`/`locations` it showed in the previous entry.
+
+## Architecture Decisions
+
+- **County FIPS codes are shown numerically (`"County 037,
+  California"`), not guessed at.** A full US county database is
+  ~3,200 entries -- a real dataset to maintain, not a small lookup
+  table like event codes or the 51 state entries. Partially embedding
+  "the counties I happen to know" would silently produce correct-looking
+  output for some alerts and raw fallback for others with no way for a
+  user to tell which is which; resolving the state name (always
+  correct, small table) while leaving the county numeric (always
+  correct, if less friendly) was preferred over a partial table that's
+  sometimes wrong-looking-right.
+- **Enrichment happens once, backend-side, not duplicated in the
+  frontend.** `AlertsWidget` already had to invent its own severity
+  classification (event code -> info/warning/critical) client-side
+  since that's a presentation decision, not a data-fidelity one -- but
+  the actual code -> name mappings are facts about the SAME spec, and
+  belong in exactly one place so they can't drift between backend and
+  frontend copies.
+
+## Files Created / Modified
+
+- `backend/app/services/decoders/same_codes.py` (new)
+- `backend/app/services/stream_service.py` -- `_decode_same` enrichment.
+- `backend/tests/test_same_codes.py` (new)
+- `backend/tests/test_stream_service.py` -- `_decode_same` end-to-end
+  enrichment test (stubs the decoder and event bus directly, since the
+  FSK demod itself is already covered by `test_same_decoder.py`).
+- `frontend/src/components/dashboard/AlertsWidget.tsx` -- displays the
+  enriched fields.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 41/41 passing, including
+  6 new `test_same_codes.py` cases (known/unknown event codes, plain
+  and subdivision-qualified locations, unknown state FIPS, malformed
+  input) and a new `_decode_same` test asserting a stubbed
+  `"ZCZC-WXR-TOR-006037+0030-1231423-KLOX/NWS-"` header produces an
+  emitted event with `event_name: "Tornado Warning"` and
+  `location_names: ["County 037, California"]`.
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- Backend restarted live and confirmed healthy; the enrichment logic
+  itself is verified by the stubbed unit test above rather than a live
+  over-the-air run, since (per the last two entries) no real
+  APRS/SAME traffic has been received in this environment to exercise
+  it end-to-end.
+
+## Outstanding Work
+
+- County-level FIPS names are still not resolved (by design, see
+  above) -- would need a real ~3,200-entry dataset, not a small
+  lookup table.
+- Same real-traffic-unverified and browser-verification gaps as the
+  last several entries.
+
+## Next Steps
+
+1. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available to verify against.
+2. Get real browser/audio verification once available in this
+   environment -- now overdue across several entries.
+3. If a full county FIPS dataset is ever worth the maintenance cost,
+   revisit `describe_location`.
+
+---
+
+# 2026-07-06 — Receiver Tiles Get Real Live Spectrum
+
+## Summary
+
+With Radio Manager blocked on missing serial/CAT hardware and browser
+verification blocked on no display, un-mocked another dashboard
+widget instead: `ReceiverTileGridWidget`'s per-tile waterfall now
+shows real live spectrum data (the same `/ws/spectrum` pipeline
+`SpectrumMonitorWidget` already uses) instead of the decorative
+`MiniWaterfall` animation, for any receiver with IQ streaming.
+`MiniWaterfall.tsx` is now unused by anything and was deleted rather
+than left as dead code.
+
+## Motivation
+
+`ReceiverTileGridWidget` was one of the last dashboard widgets still
+showing purely decorative data for something the backend has
+genuinely supported since the IQ-streaming entry two sessions ago.
+With the two "next steps" both blocked on resources this environment
+doesn't have (a CAT-capable rig; a display), continuing to close
+un-mocking gaps was the highest-value thing available to do with what
+*is* here.
+
+## Features Added
+
+- `ReceiverTileGridWidget` extracted a `ReceiverTile` subcomponent
+  (hooks can't be called inside `.map()`, so each tile needed to
+  become its own component to call `useSpectrumStream` per receiver).
+  Each tile subscribes to its own receiver's spectrum stream and
+  renders it via the same `SpectrumCanvas`/`liveFrame` mechanism
+  `SpectrumMonitorWidget` uses; the "sample" badge now only shows for
+  receivers that don't support `iq_streaming` or haven't connected yet.
+- `MiniWaterfall.tsx` deleted (no remaining callers).
+
+## Architecture Decisions
+
+- **Mounting this widget now opens a spectrum capture for every
+  listed receiver, not just the one a user explicitly picks.** This is
+  a real, deliberate change in resource behavior: previously, opening
+  the dashboard claimed no hardware at all; now, having Receiver Tiles
+  visible claims every IQ-capable receiver's capture for as long as
+  the tile is mounted (each subscription is torn down on unmount, same
+  as every other `useSpectrumStream` consumer). This was accepted
+  because "Receiver Tiles" is explicitly an at-a-glance multi-receiver
+  overview -- a mounted overview of all receivers *is* someone
+  watching all of them, consistent with the "an unwatched dashboard
+  doesn't tie up hardware" principle rather than in tension with it.
+- **Extracting a subcomponent rather than restructuring the hook.**
+  `useSpectrumStream` already handles connect/reconnect/cleanup
+  per-receiver-id; the only change needed was giving each tile its own
+  component instance so React's rules of hooks are satisfied, not any
+  change to the hook itself.
+
+## Files Created / Modified
+
+- `frontend/src/components/dashboard/ReceiverTileGridWidget.tsx` --
+  `ReceiverTile` subcomponent, real spectrum data.
+- `frontend/src/components/common/MiniWaterfall.tsx` (deleted).
+
+## Verification
+
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean (139 modules, down from 140 with
+  `MiniWaterfall` gone).
+- Backend unaffected (no backend files touched); `ruff check .` and
+  `pytest` (41/41) re-confirmed clean anyway.
+- Not independently re-verified against real hardware this entry: the
+  underlying `/ws/spectrum` pipeline and `SpectrumCanvas`'s `liveFrame`
+  rendering were already verified against the real RTL-SDR in the
+  IQ-streaming and receiver-picker entries two sessions ago, and this
+  change is a straightforward reuse of both, not new backend surface.
+  Actual on-screen rendering remains unverified by eye, same
+  browser-access gap as recent entries.
+
+## Outstanding Work
+
+- `SpectrumOverviewWidget` remains deliberately sample-only (a
+  full-band view a single narrowband receiver can't honestly provide
+  -- see the receiver-picker entry).
+- Alerts/Digital Mode Radio/Messaging Center's non-APRS tabs/Digital
+  Decodes/Recordings remain sample data pending their own backend
+  subsystems.
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps as recent entries.
+
+## Next Steps
+
+1. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available.
+2. Get real browser/audio verification once available in this
+   environment.
+3. Continue un-mocking remaining sample-data widgets as time allows,
+   or start a third decoder.
+
+---
+
+# 2026-07-06 — Recording Engine (Phase 8, Audio)
+
+## Summary
+
+Built the first real slice of Phase 8: a `RecordingService` that
+records a receiver's demodulated audio to a WAV file on disk, wired to
+"Record Audio" on `ReceiverCard` and real data in the previously
+sample-only `RecordingsWidget`. Also updated `ROADMAP.md` with a new
+"Known Environment Blocks" section per instruction, documenting
+*why* Phase 3 (Radio Manager) and browser verification are stalled --
+missing real serial/CAT hardware and missing display/headless browser,
+respectively -- rather than leaving them as silent gaps.
+
+## Motivation
+
+Both items actionable from the last several entries were genuinely
+blocked on resources this environment doesn't have. Rather than force
+either one, moved to the next real, verifiable-with-what's-actually-
+attached-here piece of work: audio recording reuses the exact
+`StreamService.subscribe_audio` queue `/ws/audio` already established,
+so it needed no new hardware-claim path -- just a consumer that writes
+to a file instead of a socket.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `app/services/recording_service.py` (`RecordingService`): `start()`
+  subscribes to `StreamService`'s audio queue (same call `/ws/audio`
+  makes) and spawns an `asyncio.Task` that drains PCM16 chunks
+  straight into a `wave` file; `stop()` cancels the task, unsubscribes,
+  and returns the finished recording's metadata. `list_recordings()`
+  scans the recordings directory and reads each WAV's own header
+  (`wave.getnframes()`/`getframerate()`) for duration, rather than
+  needing a database to track it.
+- Recording metadata (receiver, mode, frequency, timestamp) is encoded
+  in the filename (`{receiver_id}_{mode}_{freq}_{timestamp}.wav`)
+  instead of a database table -- deliberately: recordings are
+  immutable files, not editable user data like `ReceiverProfile`.
+- New `RecordingSettings.directory` config field
+  (`ECHO_BASE_RECORDINGS__DIRECTORY`, default `data/recordings`),
+  following the same pattern as `logging.directory`/`plugins.directory`
+  -- added specifically so tests could point it at a temp directory
+  instead of writing real files into the repo's `data/` on every test
+  run.
+- `POST /api/receivers/{id}/recording/start` / `/recording/stop`,
+  `GET /api/recordings` (list), `GET /api/recordings/{filename}/download`
+  (serves the WAV; path-traversal-guarded via resolved-parent-dir check).
+
+Frontend (`frontend/`):
+
+- `ReceiverCard` gained a "Record Audio" toggle (records whatever mode
+  is currently selected for Listen).
+- `RecordingsWidget` shows real recordings (active ones marked with a
+  red dot; completed ones as download links) when any exist, falling
+  back to sample data otherwise -- same pattern as every other
+  un-mocked widget this session.
+
+`ROADMAP.md`:
+
+- New "Known Environment Blocks" section listing the two genuinely
+  stalled items (Radio Manager/Hamlib -- no CAT hardware; browser
+  verification -- no display) with what each actually needs to
+  unblock, plus a refreshed "Completed"/"In Progress" list -- the old
+  one predated this entire multi-session streaming/decoder/recording
+  arc and had drifted well behind actual status.
+
+## Bugs Fixed (caught before merge, not shipped)
+
+- **`receiver_id`-in-filename sanitization would have broken the
+  "is this receiver currently recording" check.** `receiver_id`
+  contains `:` (e.g. `rtl_sdr:00000001`), which gets replaced with `_`
+  for the filename. An early version reconstructed `receiver_id` by
+  re-parsing the (sanitized) filename for `list_recordings()`'s
+  "active" flag, which would never match the real dict key stored in
+  `_active` (keyed by the *original*, colon-containing id) -- every
+  active recording would have shown as inactive. Fixed by tracking the
+  real `receiver_id`/`mode` directly on `_ActiveRecording` and only
+  falling back to filename-reconstruction for recordings from past
+  runs no longer tracked in memory.
+- **`started_at` format was inconsistent between the `start()` response
+  (full ISO datetime) and `list`/`stop()` (the filename's compact
+  `%Y%m%dT%H%M%SZ` form)**, caught during the live hardware
+  verification pass below, not by a test. Fixed by parsing the
+  filename timestamp back into the same ISO format everywhere.
+
+## Architecture Decisions
+
+- **A recording is just another `StreamService` audio subscriber, not
+  a new capture/hardware-claim path.** Exactly the same reasoning as
+  APRS/SAME decoding: the unified-capture entry two sessions ago
+  exists specifically so every new audio-consuming feature reuses one
+  claim on the hardware instead of adding a competing one.
+- **Filename-encoded metadata, no database table.** Recordings are
+  immutable, timestamped files; a database row per recording would
+  duplicate data already in the file/filename and need its own
+  cleanup-on-delete logic. Listing directly from disk means deleting a
+  file (e.g. via the filesystem, outside the app) is enough to make it
+  disappear from the API -- no orphaned DB rows possible.
+- **Recordings directory made configurable rather than hardcoding
+  `DATA_DIR / "recordings"`.** Every other per-feature directory
+  (logs, plugins) already followed this pattern specifically so tests
+  don't write real files into the repository; recordings needed the
+  same treatment the moment tests were written, not as an afterthought.
+
+## Files Created / Modified
+
+- `backend/app/services/recording_service.py` (new)
+- `backend/app/core/config.py` -- `RecordingSettings`.
+- `backend/app/main.py`, `backend/app/api/deps.py` -- `RecordingService`
+  wiring, `get_recording_service`.
+- `backend/app/api/routes/recordings.py` (new), `backend/app/api/router.py`
+- `backend/tests/conftest.py` -- `ECHO_BASE_RECORDINGS__DIRECTORY`
+  pointed at the test temp root.
+- `backend/tests/test_recording_service.py` (new)
+- `config/config.example.yaml` -- documented `recordings.directory`.
+- `frontend/src/api/recordings.ts` (new), `frontend/src/types/index.ts`
+  -- `RecordingInfo`.
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- Record toggle.
+- `frontend/src/components/dashboard/RecordingsWidget.tsx` -- real data.
+- `ROADMAP.md` -- "Known Environment Blocks" section, refreshed status.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 45/45 passing, including
+  4 new `test_recording_service.py` cases (full start/list/stop/download
+  lifecycle via the real REST routes, double-start conflicts with 409,
+  stopping an unknown recording 404s, auth required).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware, twice** (once before, once after the `started_at`
+  fix): restarted the live backend, tuned the actual RTL2838 dongle to
+  an FM broadcast frequency, started a recording via the real REST
+  endpoint, waited ~4-5 seconds, confirmed it appeared in
+  `GET /api/recordings` as active, stopped it, downloaded the WAV, and
+  parsed it back with Python's `wave` module: real duration (4-4.36s),
+  real file size, and an RMS of ~8500-8550 (of a possible 32768) --
+  genuine captured audio, not silence. Also found and killed an
+  orphaned `uvicorn` process from an earlier session turn that hadn't
+  actually exited when `kill`ed (needed `kill -9`) -- unrelated to this
+  feature, just general environment hygiene while verifying live.
+- Two real recordings from this verification pass are left in
+  `data/recordings/` as evidence the feature works end-to-end, not
+  cleaned up as scratch files.
+
+## Outstanding Work
+
+- IQ recording (raw samples, not just demodulated audio) and waterfall
+  recording are still unimplemented -- only audio recording exists so
+  far, per Phase 8's own remaining-work list.
+- No scheduled or triggered (e.g. squelch-activated) recording.
+- No recording deletion endpoint -- files can only be removed directly
+  on disk.
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps as recent entries (now
+  formally tracked in `ROADMAP.md` rather than only in diary entries).
+
+## Next Steps
+
+1. Add a recording deletion endpoint.
+2. Consider IQ (raw) recording alongside audio, now that the
+   underlying capture already produces both.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available -- both now tracked in `ROADMAP.md`'s "Known Environment
+   Blocks."
+
+---
+
+# 2026-07-06 — Recording Deletion
+
+## Summary
+
+Closed the first "Next Steps" item from the previous entry:
+`RecordingService.delete()` + `DELETE /api/recordings/{filename}`,
+wired to a delete button on completed recordings in `RecordingsWidget`.
+Refuses to delete a still-active recording (409, matching the existing
+double-start conflict convention) rather than silently stopping it
+first.
+
+## Motivation
+
+Directly named as the next step once the recording engine itself
+landed -- a recordings library you can add to but never remove from
+isn't really finished, and it was small enough to close out before
+moving to something larger (IQ recording, or the still-blocked
+Phase 3/browser items).
+
+## Features Added
+
+- `RecordingService.delete(filename)`: reuses `path_for()`'s existing
+  path-traversal guard, raises `RecordingAlreadyActiveError` (409) if
+  the filename belongs to a currently-active recording, otherwise
+  unlinks the file.
+- `DELETE /api/recordings/{filename}`.
+- `RecordingsWidget`: a delete (×) button on each completed recording
+  row; active recordings show no delete control (matching the backend
+  refusing to delete them) -- stop it first, then delete.
+
+## Architecture Decisions
+
+- **Refuses to delete an active recording rather than auto-stopping
+  it.** Silently stopping a recording as a side effect of a delete
+  call would be a surprising, easy-to-misread behavior (did they mean
+  "stop and delete" or did they click delete on the wrong row?);
+  returning a 409 and requiring an explicit stop first matches how
+  `start` already refuses to conflict-clobber an existing recording
+  rather than restarting it.
+
+## Files Created / Modified
+
+- `backend/app/services/recording_service.py` -- `delete()`.
+- `backend/app/api/routes/recordings.py` -- `DELETE /api/recordings/{filename}`.
+- `backend/tests/test_recording_service.py` -- delete lifecycle,
+  delete-while-active conflict, delete-unknown 404, path-traversal
+  rejection tests.
+- `frontend/src/api/recordings.ts` -- `deleteRecording`.
+- `frontend/src/components/dashboard/RecordingsWidget.tsx` -- delete
+  button.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 48/48 passing (45
+  previous + 3 new: delete-then-relist confirms removal, deleting an
+  active recording 409s, deleting an unknown filename 404s, and a
+  path-traversal attempt (`../../conftest.py`) 404s rather than
+  deleting something outside the recordings directory).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, then used the real
+  `DELETE /api/recordings/{filename}` endpoint against the two actual
+  WAV files left over from the previous entry's live recording
+  verification (`rtl_sdr_00000001_fm_100300000_...wav`) -- both
+  deleted successfully, confirmed gone from both the API listing and
+  the filesystem (`data/recordings/` is now empty).
+
+## Outstanding Work
+
+- No bulk delete / retention policy -- one file at a time via the API.
+- Same outstanding items as the previous entry: no IQ/waterfall
+  recording, no scheduled/triggered recording.
+- Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps remain, tracked in
+  `ROADMAP.md`.
+
+## Next Steps
+
+1. Consider IQ (raw) recording alongside audio.
+2. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.
+
+---
+
+# 2026-07-06 — IQ (Raw) Recording
+
+## Summary
+
+Closed the other "Next Steps" item: raw IQ recording alongside the
+existing demodulated-audio recording, both selectable from the same
+"Record" control on `ReceiverCard`. Required teaching `StreamService`
+a third subscriber kind (raw, unprocessed I/Q bytes) alongside
+spectrum/audio, since until now every capture consumer wanted
+*derived* data, not the raw samples themselves.
+
+## Motivation
+
+Directly named as the remaining option in the previous entry once
+recording deletion was done. Raw IQ recording is a real, distinct
+capability from audio recording -- it captures everything at a
+frequency (all signals in the receiver's instantaneous bandwidth, not
+just one demodulated channel), which is what tools like GNU Radio,
+inspectrum, or a future decoder replay feature would need as input,
+rather than already-demodulated audio.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `StreamService`/`_ReceiverCapture`: `subscribe_iq`/`unsubscribe_iq`
+  -- a third subscriber set (alongside spectrum/audio) that receives
+  the exact raw interleaved-uint8 bytes read from the plugin's
+  `IqStreamHandle`, unprocessed. `is_idle()` now also checks it,
+  and a new `sample_rate_hz` property/`get_sample_rate()` exposes the
+  capture's actual rate (needed since raw IQ has no self-describing
+  header the way a WAV file does).
+- `RecordingService`: `mode="iq"` writes a raw binary `.iq` file
+  (same format `rtl_sdr`'s own file output uses) via `subscribe_iq`
+  instead of a `.wav` via `subscribe_audio`, plus a `.iq.json` sidecar
+  holding the sample rate (a raw file has nowhere else to put it).
+  `_describe_file` branches on file extension: `.wav` reads its own
+  header via the `wave` module; `.iq` reads the sidecar and computes
+  duration from `size / 2 / sample_rate_hz`.
+- `GET /api/recordings/{filename}/download` now serves `.iq` files as
+  `application/octet-stream` instead of forcing `audio/wav` on them.
+
+Frontend (`frontend/`):
+
+- `ReceiverCard`'s Record control gained its own mode selector
+  (FM/AM/IQ) independent of the Listen mode selector -- recording IQ
+  isn't something you can "listen" to live, so it needed to not be
+  coupled to the Listen dropdown's state.
+
+## Architecture Decisions
+
+- **Raw IQ recording is a new `_ReceiverCapture` subscriber kind, not
+  a repurposed spectrum/audio one.** Spectrum subscribers get computed
+  FFT frames; audio subscribers get demodulated PCM. Recording raw
+  samples needed the *unprocessed* bytes already flowing through
+  `_run()`'s loop before any of that processing -- broadcasting them
+  directly (cheap: an empty subscriber set is checked and skipped, no
+  cost when nobody's recording raw IQ) was simpler and cheaper than
+  either adding a "raw" pseudo-mode to the audio subscriber dict or
+  reconstructing bytes from already-processed data.
+- **Filename shape stays uniform (`{receiver_id}_{mode}_{freq}_
+  {timestamp}.{ext}`) across both recording kinds**, with the file
+  extension (not an extra filename field) distinguishing WAV from raw
+  IQ -- keeps `_describe_file`'s parsing logic largely shared, branching
+  only on the one thing that's actually different (how to learn the
+  sample rate and compute duration).
+- **A JSON sidecar for IQ metadata, not a richer container format.**
+  Real IQ tools (GNU Radio, inspectrum, SDR#) expect plain raw
+  interleaved samples with sample rate conveyed out-of-band (a
+  filename convention, a companion file, or manual entry) -- adding a
+  custom header to the `.iq` file itself would make it *less*
+  directly usable by those tools, not more.
+
+## Files Created / Modified
+
+- `backend/app/services/stream_service.py` -- `subscribe_iq`/
+  `unsubscribe_iq`, `sample_rate_hz` property, `get_sample_rate()`.
+- `backend/app/services/recording_service.py` -- `mode="iq"` support,
+  `.iq`/`.iq.json` handling in `start`/`stop`/`_describe_file`/`delete`.
+- `backend/app/api/routes/recordings.py` -- download media type by extension.
+- `backend/tests/test_stream_service.py` -- `subscribe_iq` yields raw
+  bytes, shares one capture with a spectrum subscriber.
+- `backend/tests/test_recording_service.py` -- IQ recording lifecycle
+  via the real REST routes.
+- `frontend/src/components/receivers/ReceiverCard.tsx` -- separate
+  recording-mode selector including "iq".
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 51/51 passing (48
+  previous + 3 new: `subscribe_iq` yields raw interleaved bytes and
+  exposes a sample rate, IQ and spectrum subscribers share one
+  capture, and a full IQ-recording REST lifecycle test).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, tuned the actual
+  RTL2838 dongle to an FM broadcast frequency, started an IQ recording
+  via the real REST endpoint, waited ~4 seconds, stopped it, and
+  downloaded the raw file: 1,564,800 bytes at the capture's actual
+  240kHz rate (2 bytes/sample) works out to exactly the reported 3.26s
+  duration. Byte statistics on the downloaded data: mean 127.5
+  (correctly DC-centered uint8 I/Q) with a standard deviation of 13.5
+  -- real signal variance, not silence or a constant value. Deleted
+  the recording afterward via the real delete endpoint and confirmed
+  it was gone from disk.
+
+## Outstanding Work
+
+- No IQ playback/replay feature yet -- recordings exist but there's no
+  way to feed a `.iq` file back into the spectrum/audio/decoder
+  pipeline within the app (would need external tools like GNU Radio
+  today).
+- Same outstanding items as recent entries: no scheduled/triggered
+  recording, Radio-Manager-blocked-on-hardware, and
+  browser-verification-blocked-on-display (tracked in `ROADMAP.md`).
+
+## Next Steps
+
+1. Consider an IQ playback/replay path so a recorded `.iq` file could
+   feed back into spectrum/audio/decoders within the app.
+2. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.
+
+---
+
+# 2026-07-06 — IQ Playback/Replay
+
+## Summary
+
+Closed the last "Next Steps" item from the previous entry: a recorded
+`.iq` file can now be "played back" through the exact same
+spectrum/audio/decoder pipeline live receivers use, not just
+downloaded for use in an external tool. `_ReceiverCapture` never
+actually cared whether its samples came from real hardware or a file
+on disk -- it just needed something that produces an `IqStreamHandle`
+-- so this ended up being a fairly small, targeted refactor rather
+than a parallel code path.
+
+## Motivation
+
+The recording feature was "record and download" only; there was no
+way to actually watch a recording's spectrum or listen to it within
+the app itself, which is most of the point of having recorded it in
+the first place. Once IQ recording existed, replaying it through the
+same live pipeline was the natural next step, and turned out to be
+small because of how `StreamService` was already factored: a capture
+is built from whatever produces raw I/Q bytes, and nothing downstream
+of that (FFT, demod, decoders) knows or cares about the source.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `_ReceiverCapture` now takes an `open_handle: Callable[[],
+  IqStreamHandle]` instead of a `ReceiverPlugin` + calling
+  `plugin.open_iq_stream()` itself -- a small refactor that decouples
+  it from "must come from a plugin," with no behavior change for live
+  receivers (the callable is just `lambda: plugin.open_iq_stream(id)`
+  in that case).
+- `_RecordingIqStream`: an `IqStreamHandle` that reads from a `.iq`
+  file instead of hardware. `read()` returning `b""` at EOF naturally
+  ends the capture's run loop exactly like a disconnected live source
+  would -- no special "end of playback" handling needed anywhere.
+- `StreamService.register_playback(playback_id, path, sample_rate_hz)`
+  /`unregister_playback`: makes a file subscribable through
+  `playback_id` as if it were a receiver. Every existing subscribe
+  method (`subscribe_spectrum`, `subscribe_audio`, `enable_aprs`,
+  `enable_same`) works on it completely unchanged -- a playback ID is
+  just another key in the same `_captures` dict.
+- `RecordingService.sample_rate_for(filename)`: reads a `.iq`
+  recording's sidecar for the route layer, which needs it to register
+  playback (a raw file's sample rate lives only in that sidecar).
+- `POST /api/recordings/{filename}/playback/start` (rejects `.wav`
+  recordings with 422 -- there's nothing to re-derive an FFT from
+  already-demodulated audio) / `POST .../playback/stop`.
+
+Frontend (`frontend/`):
+
+- `RecordingsWidget` gained a play/stop toggle on completed `.iq`
+  recordings, showing a live `SpectrumCanvas` fed by
+  `useSpectrumStream(playback_id)` -- the *same* hook and component
+  `SpectrumMonitorWidget` uses for live receivers, pointed at a
+  playback ID instead of a receiver ID.
+
+## Architecture Decisions
+
+- **A playback ID is a receiver_id from `StreamService`'s point of
+  view, not a separate concept with its own subscribe methods.** This
+  is what made the feature small: every capability already built on
+  top of `_get_or_create` (spectrum, audio, APRS, SAME) came along for
+  free the moment `_get_or_create` learned to check a playback
+  registry before falling back to `ReceiverService.resolve_plugin`.
+  Adding a `subscribe_playback`/parallel API surface would have
+  duplicated all of that for no benefit.
+- **`StreamService` doesn't depend on `RecordingService`.**
+  `RecordingService` already depends on `StreamService` (for
+  `subscribe_audio`/`subscribe_iq`); a dependency the other direction
+  would be circular. The route layer bridges the two instead --
+  `recordings.py` resolves the path and sample rate via
+  `RecordingService`, then hands both directly to
+  `StreamService.register_playback`.
+- **WAV recordings can't be "played back" this way, and the API says
+  so explicitly (422) rather than silently doing nothing or
+  malfunctioning.** They're already-demodulated PCM audio; there's no
+  IQ signal left to FFT or decode. (A WAV recording could get its own,
+  separate "play the audio" feature later -- browser-native `<audio>`
+  playback of the download URL would work today without any backend
+  change, it just isn't wired into the UI yet.)
+
+## Files Created / Modified
+
+- `backend/app/services/stream_service.py` -- `_RecordingIqStream`,
+  `_ReceiverCapture` takes `open_handle` instead of `plugin`,
+  `register_playback`/`unregister_playback` on `StreamService`.
+- `backend/app/services/recording_service.py` -- `sample_rate_for()`.
+- `backend/app/api/routes/recordings.py` -- playback start/stop routes.
+- `backend/tests/test_stream_service.py` -- updated for the
+  `open_handle` constructor param.
+- `backend/tests/test_playback.py` (new) -- playback start/stop via
+  REST, a playback subscription yielding real FFT frames through the
+  actual `_ReceiverCapture` pipeline, WAV-rejected-with-422, unknown
+  recording 404s.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 55/55 passing (51
+  previous + 4 new `test_playback.py` cases, most notably one that
+  records via the mock plugin, starts playback, subscribes to
+  `subscribe_spectrum(playback_id)` directly, and asserts a
+  correctly-sized real FFT frame comes back through the exact same
+  code path a live receiver's spectrum uses).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware, full loop**: restarted the live backend, tuned the
+  actual RTL2838 dongle to an FM broadcast frequency, recorded 3
+  seconds of real IQ, started playback of that exact file, and opened
+  a real WebSocket to `/ws/spectrum/playback:<filename>` -- received
+  three real, changing FFT frames (peaks 17.2dB -> 14.3dB -> 13.4dB,
+  consistent with playing through a finite recording rather than a
+  live/random source). No crash, clean start/stop, recording deleted
+  successfully afterward. This is the first feature verified with
+  data that round-tripped through real hardware *and* the file system
+  *and* back through the live pipeline, not just one or the other.
+
+## Outstanding Work
+
+- No playback speed control, seeking, or looping -- a `.iq` file plays
+  through once at its native rate and stops (EOF ends the capture).
+- WAV (audio) recordings have no in-app playback yet -- would just be
+  a `<audio src={downloadUrl}>` element, no backend work needed.
+- Same outstanding items as recent entries: no scheduled/triggered
+  recording, Radio-Manager-blocked-on-hardware, and
+  browser-verification-blocked-on-display (tracked in `ROADMAP.md`).
+
+## Next Steps
+
+1. Wire browser-native `<audio>` playback for completed WAV recordings
+   in `RecordingsWidget` -- no backend change needed, pure frontend.
+2. Consider playback controls (seek/loop) if IQ replay turns out to be
+   useful enough to want them.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.
+
+---
+
+# 2026-07-06 — WAV Playback in RecordingsWidget
+
+## Summary
+
+Closed the small item flagged at the end of the previous entry: a
+play/stop toggle on completed WAV (FM/AM audio) recordings in
+`RecordingsWidget`, using a plain HTML5 `<audio>` element pointed at
+the existing download URL. Pure frontend, no backend change, exactly
+as predicted last entry.
+
+## Motivation
+
+Named as a quick follow-up once IQ playback existed: WAV recordings
+had a download link but no way to actually listen to one without
+leaving the app. Since the backend already serves the file at a
+stable URL with the correct `audio/wav` content type, this needed no
+new API, just a UI element.
+
+## Features Added
+
+- `RecordingsWidget`: a play/stop (▶/■) button on completed non-IQ
+  (FM/AM) recordings, independent of the existing IQ playback toggle.
+  Clicking it mounts an `<audio controls autoPlay>` pointed at
+  `recordingDownloadUrl(filename)`; `onEnded` resets the toggle back to
+  a not-playing state. Switching to a different recording, deleting
+  the currently-playing one, or navigating away all correctly tear
+  down the audio element (same `key`-based remount / state-cleanup
+  pattern already used for the IQ spectrum player above it).
+
+## Architecture Decisions
+
+- **No backend change at all.** The download endpoint already existed
+  (from the recording-engine entry) and already sets the right
+  `Content-Type`; an `<audio>` element is just another consumer of
+  that same URL. Building a dedicated streaming/playback endpoint
+  would have duplicated something that already worked.
+- **`Content-Disposition: attachment` on the download response was
+  left as-is**, even though it's normally associated with forcing a
+  "Save As" dialog: HTML5 `<audio>`/`<video>` elements fetch their
+  `src` as a media subresource, not a navigation, so browsers play it
+  directly regardless of that header -- verified by inspecting the
+  actual response headers (`Content-Type: audio/wav`, valid RIFF
+  data), not by hearing it play, since no browser is available in this
+  environment to confirm audibly.
+
+## Files Created / Modified
+
+- `frontend/src/components/dashboard/RecordingsWidget.tsx` -- audio
+  play/stop toggle and `<audio>` element.
+
+## Verification
+
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- Backend unaffected (no backend files touched); `ruff check .` and
+  `pytest` (55/55) re-confirmed clean anyway.
+- **Real hardware, headers only**: recorded ~2 seconds of real FM
+  audio from the actual RTL2838, then fetched
+  `GET /api/recordings/{filename}/download` directly and inspected the
+  response: `Content-Type: audio/wav`, valid `RIFF` magic bytes,
+  103,616 bytes. This confirms the resource an `<audio>` element would
+  request is valid and correctly typed; it does not confirm the
+  browser actually renders playback controls or produces sound, which
+  remains unverifiable without a browser in this environment.
+
+## Outstanding Work
+
+- Actual in-browser audio playback (does the `<audio>` element render
+  correctly, do controls work, is there audible sound) is unverified --
+  same browser-access gap as every frontend feature in recent entries.
+- Same outstanding items as recent entries otherwise: no
+  scheduled/triggered recording, no IQ playback seek/loop,
+  Radio-Manager-blocked-on-hardware, browser-verification-blocked-on-
+  display (all tracked in `ROADMAP.md`).
+
+## Next Steps
+
+1. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available.
+2. Get real browser/audio verification once available in this
+   environment -- overdue across many entries now, the single most
+   repeated outstanding item in this diary.
+3. Consider scheduled/triggered recording if recording usage grows.

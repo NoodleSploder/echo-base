@@ -2,8 +2,18 @@
 
 Discovers RTL-SDR dongles via the `rtl_test` command-line tool (part of
 the rtl-sdr project) and models basic lifecycle/tuning state. Raw IQ
-streaming (for live spectrum display) shells out to `rtl_sdr` the same
-way discovery shells out to `rtl_test` -- see `open_iq_stream` below.
+streaming shells out to `rtl_sdr`, the same way discovery shells out to
+`rtl_test` -- see `open_iq_stream` below. There is deliberately no
+separate audio-streaming subprocess: StreamService derives both the
+spectrum FFT and demodulated audio from this one IQ capture, since a
+dongle can only be opened by one process at a time.
+
+The default IQ sample rate (240 kHz, see `_DeviceState.sample_rate_hz`)
+is chosen to divide evenly into StreamService's 48kHz audio output
+(a factor of 5) rather than the wider rate a spectrum-only view might
+otherwise use -- a deliberate span-for-simplicity tradeoff. Widen it
+via `set_sample_rate` for a broader spectrum view; audio decimation
+adapts to whatever rate is actually configured.
 """
 from __future__ import annotations
 
@@ -20,7 +30,7 @@ class _DeviceState:
     index: int
     state: str = "idle"
     frequency_hz: int | None = None
-    sample_rate_hz: int | None = 2_048_000
+    sample_rate_hz: int | None = 240_000
     bandwidth_hz: int | None = None
     gain: str | float = "auto"
 
@@ -166,12 +176,14 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
         device = self._require(receiver_id)
         binary = shutil.which("rtl_sdr")
         if binary is None:
-            raise RuntimeError("rtl_sdr binary not found on PATH; install rtl-sdr to enable live spectrum.")
+            raise RuntimeError(
+                "rtl_sdr binary not found on PATH; install rtl-sdr to enable live spectrum/audio."
+            )
 
         # Untuned receivers still get a usable spectrum preview rather
         # than requiring the user to tune before a waterfall appears.
         frequency_hz = device.frequency_hz or 100_000_000
-        sample_rate_hz = device.sample_rate_hz or 2_048_000
+        sample_rate_hz = device.sample_rate_hz or 240_000
 
         args = [binary, "-d", str(device.index), "-f", str(frequency_hz), "-s", str(sample_rate_hz)]
         if isinstance(device.gain, int | float) or (isinstance(device.gain, str) and device.gain != "auto"):

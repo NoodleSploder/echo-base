@@ -11,3 +11,13 @@ export const stopReceiver = (id: string) =>
   api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/stop`);
 export const tuneReceiver = (id: string, frequency: number) =>
   api.post<ReceiverStatus>(`/api/receivers/${encodeURIComponent(id)}/tune`, { frequency });
+
+export const startAprsDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/aprs/start`);
+export const stopAprsDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/aprs/stop`);
+
+export const startSameDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/same/start`);
+export const stopSameDecoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/same/stop`);

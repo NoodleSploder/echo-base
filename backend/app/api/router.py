@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes import (
+    audio,
     auth,
     config,
     dashboard,
@@ -11,6 +12,7 @@ from app.api.routes import (
     plugins,
     receiver_profiles,
     receivers,
+    recordings,
     spectrum,
     system,
     users,
@@ -27,3 +29,5 @@ api_router.include_router(plugins.router)
 api_router.include_router(events.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(spectrum.router)
+api_router.include_router(audio.router)
+api_router.include_router(recordings.router)

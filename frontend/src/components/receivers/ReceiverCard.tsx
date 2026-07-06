@@ -1,8 +1,25 @@
 import { useState, type FormEvent } from "react";
-import { startReceiver, stopReceiver, tuneReceiver } from "../../api/receivers";
+import {
+  startAprsDecoding,
+  startReceiver,
+  startSameDecoding,
+  stopAprsDecoding,
+  stopReceiver,
+  stopSameDecoding,
+  tuneReceiver,
+} from "../../api/receivers";
+import { startRecording, stopRecording } from "../../api/recordings";
+import { useAudioPlayer } from "../../hooks/useAudioPlayer";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
 import { StatusBadge } from "../common/StatusBadge";
+
+// Matches backend/app/services/dsp.py's DEMODULATORS -- USB/LSB (SSB)
+// demod isn't implemented in software yet, so only FM/AM are offered.
+const AUDIO_MODES = ["fm", "am"];
+// Recording additionally offers "iq" (raw samples, not demodulated) --
+// not a Listen option since there's nothing to play back live for it.
+const RECORDING_MODES = ["fm", "am", "iq"];
 
 export function ReceiverCard({
   receiver,
@@ -15,8 +32,24 @@ export function ReceiverCard({
 }) {
   const [frequency, setFrequency] = useState("");
   const [busy, setBusy] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [mode, setMode] = useState("fm");
+  const [squelch, setSquelch] = useState(0);
+  const [aprsEnabled, setAprsEnabled] = useState(false);
+  const [aprsBusy, setAprsBusy] = useState(false);
+  const [sameEnabled, setSameEnabled] = useState(false);
+  const [sameBusy, setSameBusy] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
+  const [recordingMode, setRecordingMode] = useState("fm");
 
   const state = status?.state ?? "idle";
+  // Audio is derived from the same IQ capture as the spectrum widgets
+  // (see StreamService), so any receiver with IQ streaming gets Listen.
+  const supportsAudio = receiver.capabilities.iq_streaming === true;
+  const { connected: audioConnected, level } = useAudioPlayer(receiver.id, mode, listening, squelch);
+  const meterWidth = Math.min(1, level * 2.5) * 100;
 
   async function handleStart() {
     setBusy(true);
@@ -45,6 +78,51 @@ export function ReceiverCard({
       onChange(await tuneReceiver(receiver.id, hz));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleToggleAprs() {
+    setAprsBusy(true);
+    try {
+      if (aprsEnabled) {
+        await stopAprsDecoding(receiver.id);
+      } else {
+        await startAprsDecoding(receiver.id);
+      }
+      setAprsEnabled((prev) => !prev);
+    } finally {
+      setAprsBusy(false);
+    }
+  }
+
+  async function handleToggleSame() {
+    setSameBusy(true);
+    try {
+      if (sameEnabled) {
+        await stopSameDecoding(receiver.id);
+      } else {
+        await startSameDecoding(receiver.id);
+      }
+      setSameEnabled((prev) => !prev);
+    } finally {
+      setSameBusy(false);
+    }
+  }
+
+  async function handleToggleRecording() {
+    setRecordingBusy(true);
+    setRecordingError(null);
+    try {
+      if (recording) {
+        await stopRecording(receiver.id);
+      } else {
+        await startRecording(receiver.id, recordingMode);
+      }
+      setRecording((prev) => !prev);
+    } catch {
+      setRecordingError("Could not toggle recording.");
+    } finally {
+      setRecordingBusy(false);
     }
   }
 
@@ -99,6 +177,127 @@ export function ReceiverCard({
             Stop
           </button>
         </div>
+
+        {supportsAudio && (
+          <div className="flex items-center gap-2 border-t border-base-700 pt-3">
+            <select
+              value={mode}
+              onChange={(event) => setMode(event.target.value)}
+              disabled={listening}
+              className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+            >
+              {AUDIO_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setListening((prev) => !prev)}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium ${
+                listening
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+            >
+              {listening ? (audioConnected ? "Listening..." : "Connecting...") : "Listen"}
+            </button>
+          </div>
+        )}
+
+        {supportsAudio && listening && (
+          <div className="space-y-2 text-xs">
+            <div>
+              <div className="mb-1 flex items-center justify-between text-slate-400">
+                <span>Level</span>
+                {squelch > 0 && level < squelch && <span className="text-amber-500">squelched</span>}
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-base-800">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-75 ${
+                    squelch > 0 && level < squelch ? "bg-slate-600" : "bg-emerald-400"
+                  }`}
+                  style={{ width: `${meterWidth}%` }}
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-slate-400">
+              <span className="shrink-0">Squelch</span>
+              <input
+                type="range"
+                min={0}
+                max={0.3}
+                step={0.005}
+                value={squelch}
+                onChange={(event) => setSquelch(Number(event.target.value))}
+                className="w-full"
+              />
+            </label>
+          </div>
+        )}
+
+        {supportsAudio && (
+          <div className="flex gap-2 border-t border-base-700 pt-3">
+            <button
+              onClick={() => void handleToggleAprs()}
+              disabled={aprsBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                aprsEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Decoded APRS packets appear in the Activity Feed, System Log, and Messaging Center widgets"
+            >
+              {aprsEnabled ? "APRS Decoding On" : "Decode APRS"}
+            </button>
+            <button
+              onClick={() => void handleToggleSame()}
+              disabled={sameBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                sameEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Decoded NOAA Weather Radio SAME alerts appear in the Activity Feed, System Log, and Alerts widgets"
+            >
+              {sameEnabled ? "SAME Decoding On" : "Decode SAME"}
+            </button>
+          </div>
+        )}
+
+        {supportsAudio && (
+          <div className="flex items-center gap-2 border-t border-base-700 pt-3">
+            <select
+              value={recordingMode}
+              onChange={(event) => setRecordingMode(event.target.value)}
+              disabled={recording}
+              className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+            >
+              {RECORDING_MODES.map((m) => (
+                <option key={m} value={m}>
+                  {m.toUpperCase()}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => void handleToggleRecording()}
+              disabled={recordingBusy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                recording
+                  ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title={
+                recordingMode === "iq"
+                  ? "Records raw IQ samples to a .iq file -- see the Recordings widget"
+                  : `Records the current "${recordingMode.toUpperCase()}" audio to a WAV file -- see the Recordings widget`
+              }
+            >
+              {recording ? "● Recording..." : "Record"}
+            </button>
+          </div>
+        )}
+        {recordingError && <p className="text-xs text-red-400">{recordingError}</p>}
       </div>
     </Card>
   );

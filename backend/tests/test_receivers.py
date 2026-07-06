@@ -28,6 +28,28 @@ async def test_receiver_lifecycle(client, admin_user):
     assert stop.json()["data"]["state"] == "idle"
 
 
+async def test_status_reflects_real_capture_without_start(client, admin_user):
+    """A spectrum/audio subscriber makes IQ actually flow even if the
+    user never clicked Start -- the reported state should say so."""
+    await client.post("/api/auth/login", json=admin_user)
+
+    from app.main import app
+
+    idle = await client.get("/api/receivers/mock:0")
+    assert idle.json()["data"]["state"] == "idle"
+
+    stream_service = app.state.stream_service
+    queue = await stream_service.subscribe_spectrum("mock:0")
+    try:
+        active = await client.get("/api/receivers/mock:0")
+        assert active.json()["data"]["state"] == "streaming"
+    finally:
+        await stream_service.unsubscribe_spectrum("mock:0", queue)
+
+    idle_again = await client.get("/api/receivers/mock:0")
+    assert idle_again.json()["data"]["state"] == "idle"
+
+
 async def test_unknown_receiver_returns_404(client, admin_user):
     await client.post("/api/auth/login", json=admin_user)
 

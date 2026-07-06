@@ -42,19 +42,37 @@ Long-term goals include:
 - Architecture planning
 - Platform foundation: backend framework, configuration, logging, database, authentication, plugin framework (Phase 1)
 - Frontend framework: React/TypeScript/Tailwind dashboard shell with auth and live updates (Phase 1)
+- Draggable/persisted widget-grid dashboard (react-grid-layout), replacing the original fixed sidebar/topbar shell
+- CI (backend: ruff + pytest; frontend: eslint + tsc/build)
 - Receiver Manager core + a working `rtl_sdr` reference plugin (Phase 2, partial)
+- Receiver Profiles (saved frequency/gain presets, apply-to-receiver)
+- Unified live IQ capture (`StreamService`): one hardware claim per receiver feeds spectrum FFT, software audio demod (FM/AM), and decoders -- not three competing subprocesses (Phase 2/4, partial)
+- Live Spectrum Monitor widget + per-tile Receiver Tiles waterfalls (real FFT data, Phase 4 partial)
+- Live audio ("Listen") with squelch/level meter (Phase 2/5, partial)
+- First two real decoders, from scratch: APRS (AFSK1200/AX.25) and NOAA Weather Radio SAME, both wired into the dashboard (Phase 5/7, partial)
 
 ---
 
 ## In Progress
 
-- Receiver profiles, calibration, and richer hardware support (Phase 2)
+- Richer hardware support beyond `rtl_sdr` (Phase 2)
+- Un-mocking remaining dashboard widgets (Digital Modes, Messaging beyond APRS, Recording, wideband Spectrum Overview) as their backend subsystems land
+
+---
+
+## Known Environment Blocks
+
+These aren't abandoned -- they're blocked on resources this development environment doesn't currently have. Revisit when the resource becomes available; see `DEVELOPMENT_DIARY.md` for the entries where each was hit.
+
+- **Phase 3 (Radio Management / Hamlib).** No serial/CAT-capable transceiver is attached here (checked: no `/dev/ttyUSB*`/`/dev/ttyACM*`, no `rigctl`/`rigctld` installed). Every feature built so far has been verified against real attached hardware (an RTL-SDR receive-only dongle); starting Radio Manager without a real rig to test against would break that pattern. Needs: a CAT-capable transceiver (or a rigctld-compatible simulator) connected to whatever machine is doing the work.
+- **Real over-the-air decoder verification (APRS, SAME).** Both decoders are proven correct via synthetic encode/decode round-trip tests, but have not decoded a single real packet -- there's no guarantee of an active APRS station or NOAA Weather Radio transmitter in range of whatever antenna is attached here. Needs: real RF activity in range, or a known-good test transmission.
+- **Browser-based UI/UX verification.** No display or headless browser is available in this environment, so frontend work (including the entire draggable dashboard grid and all "Listen"/level-meter/squelch UI) is verified via `tsc`/`eslint`/build success and code review, not by looking at or listening to it. Needs: a display or headless browser (e.g. Playwright) available to the development environment.
 
 ---
 
 ## Remaining
 
-Everything from Phase 3 onward (Radio Management through Documentation).
+Everything else from Phase 3 onward not listed above as completed/in-progress.
 
 ---
 

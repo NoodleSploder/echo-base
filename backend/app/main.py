@@ -26,7 +26,8 @@ from app.db.models.user import User, UserRole
 from app.plugins.manager import PluginManager
 from app.schemas.common import fail
 from app.services.receiver_service import ReceiverService
-from app.services.spectrum_service import SpectrumService
+from app.services.recording_service import RecordingService
+from app.services.stream_service import StreamService
 from app.websocket.manager import ConnectionManager
 
 logger = get_logger("echo_base.app")
@@ -99,14 +100,16 @@ async def lifespan(app: FastAPI):
     plugin_manager.load_all()
 
     receiver_service = ReceiverService(plugin_manager)
-    spectrum_service = SpectrumService(receiver_service)
+    stream_service = StreamService(receiver_service, event_bus)
+    recording_service = RecordingService(stream_service, Path(settings.recordings.directory))
 
     app.state.settings = settings
     app.state.event_bus = event_bus
     app.state.connection_manager = connection_manager
     app.state.plugin_manager = plugin_manager
     app.state.receiver_service = receiver_service
-    app.state.spectrum_service = spectrum_service
+    app.state.stream_service = stream_service
+    app.state.recording_service = recording_service
 
     await _bootstrap_admin(settings)
 
@@ -118,7 +121,8 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down Echo Base")
-    spectrum_service.shutdown()
+    recording_service.shutdown()
+    stream_service.shutdown()
     plugin_manager.shutdown_all()
     await db_session.dispose_engine()
 

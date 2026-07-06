@@ -43,8 +43,12 @@ class IqStreamHandle(Protocol):
 
     Samples are interleaved unsigned 8-bit I/Q pairs (the format
     `rtl_sdr` and most similar command-line SDR tools emit), read in
-    blocking chunks by ``SpectrumService`` from a background thread --
-    never from the asyncio event loop.
+    blocking chunks by ``StreamService`` from a background thread --
+    never from the asyncio event loop. This is the only hardware
+    capture a receiver plugin needs to provide: both the spectrum FFT
+    and demodulated audio are derived from these same samples in
+    software (see ``app.services.dsp``), so a receiver's hardware is
+    never claimed by more than one capture at a time.
     """
 
     sample_rate_hz: int
@@ -87,11 +91,13 @@ class ReceiverPlugin(Plugin):
         raise NotImplementedError
 
     def open_iq_stream(self, receiver_id: str) -> IqStreamHandle:
-        """Start a raw-IQ capture for live spectrum display.
+        """Start a raw-IQ capture, feeding both live spectrum display and
+        (via software demodulation) live audio listening.
 
         Optional: plugins that can't stream raw samples (or haven't
         implemented it yet) should leave this raising
-        NotImplementedError, which SpectrumService treats as "no live
-        spectrum available for this receiver" rather than an error.
+        NotImplementedError, which StreamService treats as "no live
+        spectrum/audio available for this receiver" rather than an
+        error.
         """
         raise NotImplementedError

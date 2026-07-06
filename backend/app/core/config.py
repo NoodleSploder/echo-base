@@ -77,6 +77,10 @@ class PluginSettings(BaseModel):
     settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+class RecordingSettings(BaseModel):
+    directory: str = str(DATA_DIR / "recordings")
+
+
 class YamlConfigSource(PydanticBaseSettingsSource):
     """Pydantic-settings source that reads a single YAML file, if present."""
 
@@ -112,6 +116,7 @@ class Settings(BaseSettings):
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
     plugins: PluginSettings = Field(default_factory=PluginSettings)
+    recordings: RecordingSettings = Field(default_factory=RecordingSettings)
 
     @classmethod
     def settings_customise_sources(

@@ -46,3 +46,6 @@ plugins:
   settings:
     rtl_sdr:
       discovery_timeout_seconds: 5
+
+recordings:
+  directory: ../data/recordings

@@ -35,7 +35,7 @@ from app.plugins import ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
 
 
 class MockIqStream:
-    """Deterministic-enough fake IQ source so SpectrumService can be tested
+    """Deterministic-enough fake IQ source so StreamService can be tested
     without real SDR hardware."""
 
     def __init__(self, sample_rate_hz):
@@ -92,7 +92,7 @@ class MockReceiverPlugin(ReceiverPlugin):
         return ReceiverStatus(id=receiver_id, **self._state)
 
     def open_iq_stream(self, receiver_id):
-        return MockIqStream(self._state["sample_rate_hz"] or 2_048_000)
+        return MockIqStream(self._state["sample_rate_hz"] or 240_000)
 '''
 )
 
@@ -100,6 +100,7 @@ os.environ["ECHO_BASE_ENVIRONMENT"] = "testing"
 os.environ["ECHO_BASE_CONFIG_FILE"] = str(_TEST_ROOT / "unused.yaml")
 os.environ["ECHO_BASE_LOGGING__DIRECTORY"] = str(_TEST_ROOT / "logs")
 os.environ["ECHO_BASE_PLUGINS__DIRECTORY"] = str(_PLUGINS_DIR)
+os.environ["ECHO_BASE_RECORDINGS__DIRECTORY"] = str(_TEST_ROOT / "recordings")
 
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

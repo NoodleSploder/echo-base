@@ -96,5 +96,5 @@ class ReceiverService:
 
     async def resolve_plugin(self, receiver_id: str) -> ReceiverPlugin:
         """Exposes plugin lookup for callers that need to drive the plugin
-        directly, e.g. SpectrumService opening a raw IQ stream."""
+        directly, e.g. StreamService opening a raw IQ stream."""
         return await self._resolve(receiver_id)

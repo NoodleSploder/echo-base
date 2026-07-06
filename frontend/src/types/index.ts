@@ -79,3 +79,14 @@ export interface EchoBaseEvent {
   timestamp: string;
   data: Record<string, unknown>;
 }
+
+export interface RecordingInfo {
+  filename: string;
+  receiver_id: string;
+  mode: string;
+  frequency_hz: number | null;
+  started_at: string;
+  duration_seconds: number;
+  size_bytes: number;
+  active: boolean;
+}
