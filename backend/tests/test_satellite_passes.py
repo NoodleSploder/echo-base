@@ -122,3 +122,58 @@ async def test_predict_passes_requires_auth(client):
         json={"tle_line1": "x", "tle_line2": "y", "latitude_deg": 0, "longitude_deg": 0},
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_schedule_next_pass_recording(client, admin_user):
+    from app.main import app
+
+    await client.post("/api/auth/login", json=admin_user)
+    tle1, tle2 = NOAA_15_TLE
+
+    resp = await client.post(
+        "/api/satellites/mock:0/schedule-next-pass",
+        json={
+            "tle_line1": tle1,
+            "tle_line2": tle2,
+            "latitude_deg": 40.0,
+            "longitude_deg": -105.0,
+            "elevation_m": 1600.0,
+            "hours": 24,
+            "min_elevation_deg": 10.0,
+            "mode": "fm",
+            "frequency_hz": 137620000,
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["los_at"] > body["aos_at"]
+    assert body["duration_seconds"] > 0
+
+    scheduled_recording_service = app.state.scheduled_recording_service
+    jobs = scheduled_recording_service.list_jobs("mock:0")
+    assert any(job.id == body["job_id"] for job in jobs)
+
+    status = await client.get("/api/receivers/mock:0")
+    assert status.json()["data"]["frequency_hz"] == 137620000
+
+    scheduled_recording_service.cancel(body["job_id"])
+
+
+@pytest.mark.asyncio
+async def test_schedule_next_pass_404s_when_no_pass_in_window(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+    tle1, tle2 = NOAA_15_TLE
+
+    resp = await client.post(
+        "/api/satellites/mock:0/schedule-next-pass",
+        json={
+            "tle_line1": tle1,
+            "tle_line2": tle2,
+            "latitude_deg": 40.0,
+            "longitude_deg": -105.0,
+            "hours": 0.01,
+            "min_elevation_deg": 89.9,
+        },
+    )
+    assert resp.status_code == 404

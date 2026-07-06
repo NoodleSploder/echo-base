@@ -1,6 +1,15 @@
-import { useState, type FormEvent } from "react";
-import { predictSatellitePasses, type SatellitePass } from "../api/satellites";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  predictSatellitePasses,
+  scheduleNextPassRecording,
+  type SatellitePass,
+  type ScheduledPassRecording,
+} from "../api/satellites";
+import { listReceivers } from "../api/receivers";
+import type { ReceiverDescriptor } from "../types";
 import { Card } from "../components/common/Card";
+
+const RECORDING_MODES = ["fm", "am", "iq"];
 
 // TLEs go stale within 1-2 weeks -- this deliberately doesn't bundle
 // or fetch one (see satellite_passes.py's docstring); paste a current
@@ -17,26 +26,69 @@ export function SatellitesPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [receivers, setReceivers] = useState<ReceiverDescriptor[]>([]);
+  const [receiverId, setReceiverId] = useState("");
+  const [downlinkFrequencyMhz, setDownlinkFrequencyMhz] = useState("");
+  const [recordingMode, setRecordingMode] = useState("fm");
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduled, setScheduled] = useState<ScheduledPassRecording | null>(null);
+
+  useEffect(() => {
+    void listReceivers()
+      .then((found) => {
+        setReceivers(found);
+        if (found.length > 0) setReceiverId((prev) => prev || found[0].id);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  function currentRequest() {
+    return {
+      tle_line1: tleLine1.trim(),
+      tle_line2: tleLine2.trim(),
+      latitude_deg: Number(latitude),
+      longitude_deg: Number(longitude),
+      elevation_m: Number(elevation) || 0,
+      hours: Number(hours) || 24,
+      min_elevation_deg: Number(minElevation) || 10,
+    };
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError(null);
     try {
-      const result = await predictSatellitePasses({
-        tle_line1: tleLine1.trim(),
-        tle_line2: tleLine2.trim(),
-        latitude_deg: Number(latitude),
-        longitude_deg: Number(longitude),
-        elevation_m: Number(elevation) || 0,
-        hours: Number(hours) || 24,
-        min_elevation_deg: Number(minElevation) || 10,
-      });
+      const result = await predictSatellitePasses(currentRequest());
       setPasses(result);
     } catch {
       setError("Could not predict passes -- check the TLE lines and coordinates.");
       setPasses(null);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleScheduleNextPass() {
+    if (!receiverId) return;
+    setScheduleBusy(true);
+    setScheduleError(null);
+    setScheduled(null);
+    try {
+      const frequencyHz = downlinkFrequencyMhz.trim()
+        ? Math.round(Number(downlinkFrequencyMhz) * 1e6)
+        : undefined;
+      const result = await scheduleNextPassRecording(receiverId, {
+        ...currentRequest(),
+        mode: recordingMode,
+        frequency_hz: frequencyHz,
+      });
+      setScheduled(result);
+    } catch {
+      setScheduleError("Could not schedule a recording -- check the TLE/coordinates, or there may be no pass in this window.");
+    } finally {
+      setScheduleBusy(false);
     }
   }
 
@@ -146,6 +198,74 @@ export function SatellitesPage() {
               </tbody>
             </table>
           )}
+        </Card>
+      )}
+
+      {receivers.length > 0 && (
+        <Card title="Schedule Recording for Next Pass">
+          <div className="space-y-3 text-sm">
+            <p className="text-xs text-slate-500">
+              Finds the next pass (using the TLE/coordinates above) within the window and schedules a
+              recording covering it exactly, reusing the same scheduled-recording engine as the Receivers
+              page.
+            </p>
+            <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Receiver</label>
+                <select
+                  value={receiverId}
+                  onChange={(event) => setReceiverId(event.target.value)}
+                  className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100"
+                >
+                  {receivers.map((receiver) => (
+                    <option key={receiver.id} value={receiver.id}>
+                      {receiver.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Downlink (MHz)</label>
+                <input
+                  type="number"
+                  value={downlinkFrequencyMhz}
+                  onChange={(event) => setDownlinkFrequencyMhz(event.target.value)}
+                  placeholder="e.g. 137.6200"
+                  className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs text-slate-500">Mode</label>
+                <select
+                  value={recordingMode}
+                  onChange={(event) => setRecordingMode(event.target.value)}
+                  className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100"
+                >
+                  {RECORDING_MODES.map((mode) => (
+                    <option key={mode} value={mode}>
+                      {mode.toUpperCase()}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleScheduleNextPass()}
+              disabled={scheduleBusy || !tleLine1 || !tleLine2 || !latitude || !longitude || !receiverId}
+              className="rounded-md border border-base-600 px-3 py-1.5 text-slate-300 hover:bg-base-800 disabled:opacity-50"
+            >
+              {scheduleBusy ? "Scheduling..." : "Schedule Next Pass Recording"}
+            </button>
+            {scheduleError && <p className="text-xs text-red-400">{scheduleError}</p>}
+            {scheduled && (
+              <p className="text-xs text-emerald-400">
+                Scheduled: {new Date(scheduled.aos_at).toLocaleString()} &rarr;{" "}
+                {new Date(scheduled.los_at).toLocaleString()} (max {scheduled.max_elevation_deg}&deg;,{" "}
+                {Math.round(scheduled.duration_seconds)}s)
+              </p>
+            )}
+          </div>
         </Card>
       )}
     </div>

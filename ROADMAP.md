@@ -369,12 +369,17 @@ Completed
   ground-station form. Callers supply their own current TLE (e.g. from
   Celestrak) -- none is bundled/fetched, since a shipped TLE would be
   stale within 1-2 weeks.)
+- Automatic recording (`POST /api/satellites/{receiver_id}/schedule-next-pass`:
+  finds the next pass and schedules a recording covering it exactly,
+  reusing `ScheduledRecordingService` -- optionally tunes the receiver
+  to the satellite's downlink frequency immediately, since the
+  scheduler itself just records whatever the receiver is already on.
+  A "Schedule Recording for Next Pass" control on `/satellites`.)
 
 Remaining
 
-- Automatic recording
-- Tracking
-- Scheduling
+- Tracking (retuning across a pass to follow Doppler shift)
+- Scheduling (recurring/multi-satellite scheduling beyond "next pass")
 
 ---
 

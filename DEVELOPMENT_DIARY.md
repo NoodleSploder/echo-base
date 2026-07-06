@@ -4330,3 +4330,51 @@ location -- the "real hardware" for this feature is just correct math.
    `ScheduledRecordingService`) or retune to track a satellite's
    Doppler-shifted downlink across a pass.
 2. Same environment blocks as ever for everything else.
+
+## Added: schedule a recording for the next satellite pass
+
+Closes Phase 9's "Automatic recording" item, the natural follow-up to
+pass prediction: `POST /api/satellites/{receiver_id}/schedule-next-pass`
+finds the next pass (reusing `find_passes`) and schedules a recording
+covering it exactly -- AOS as `start_at`, `(los_at - aos_at)` as
+`duration_seconds` -- by calling straight into the existing
+`ScheduledRecordingService.schedule`, no new scheduling mechanism.
+Optionally tunes the receiver to the satellite's downlink frequency
+immediately (not at AOS): `ScheduledRecordingService` itself just
+records whatever the receiver happens to be on when the job fires, so
+getting the frequency right ahead of time is this endpoint's job, not
+the scheduler's.
+
+Frontend: a "Schedule Recording for Next Pass" card on `/satellites`
+(receiver picker + downlink frequency + mode), shown once at least one
+receiver is available.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 153/153 passing (2 new:
+  a real schedule-and-verify round trip -- confirms the job appears
+  in `ScheduledRecordingService.list_jobs` and that the receiver was
+  actually retuned via the real REST status endpoint -- plus a
+  404-when-no-pass-in-window check using an intentionally tiny
+  window/impossibly-high elevation).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: fetched a live current TLE for NOAA 15 from
+  Celestrak, called the real endpoint against the actual RTL2838 with
+  a downlink frequency of 137.62MHz (NOAA APT). Confirmed via
+  `GET /api/receivers/{id}` that the real receiver was actually
+  retuned to 137.62MHz (not just that the API accepted the request),
+  and via `GET /api/receivers/{id}/scheduled-recordings` that a real
+  job was created with `status: "pending"` and the exact predicted
+  AOS/duration. Cancelled the job and restored the receiver to its
+  default frequency afterward (the actual pass was hours away, so the
+  recording itself firing wasn't waited for -- the scheduling and
+  tuning integration is what this slice verifies).
+
+## Next Steps
+
+1. Doppler tracking across a pass (Phase 9's remaining "Tracking"
+   item) -- retune periodically during a pass following the TLE's own
+   predicted range-rate, now that pass prediction's orbital math
+   already exists to compute it from.
+2. Same environment blocks as ever for everything else.

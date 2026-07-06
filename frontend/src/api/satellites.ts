@@ -18,3 +18,22 @@ export interface PassPredictionRequest {
 
 export const predictSatellitePasses = (request: PassPredictionRequest) =>
   api.post<SatellitePass[]>("/api/satellites/passes", request);
+
+export interface ScheduleNextPassRequest extends PassPredictionRequest {
+  mode?: string;
+  frequency_hz?: number;
+}
+
+export interface ScheduledPassRecording {
+  job_id: string;
+  aos_at: string;
+  los_at: string;
+  max_elevation_deg: number;
+  duration_seconds: number;
+}
+
+export const scheduleNextPassRecording = (receiverId: string, request: ScheduleNextPassRequest) =>
+  api.post<ScheduledPassRecording>(
+    `/api/satellites/${encodeURIComponent(receiverId)}/schedule-next-pass`,
+    request,
+  );
