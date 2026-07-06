@@ -28,3 +28,17 @@ export const startSignalDetection = (id: string, marginDb: number) =>
   });
 export const stopSignalDetection = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/signal-detection/stop`);
+
+export interface OccupancySnapshot {
+  frequencies_hz: number[];
+  occupancy_percent: number[];
+}
+
+export const startOccupancy = (id: string, marginDb: number) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/occupancy/start`, {
+    margin_db: marginDb,
+  });
+export const stopOccupancy = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/occupancy/stop`);
+export const getOccupancy = (id: string) =>
+  api.get<OccupancySnapshot>(`/api/receivers/${encodeURIComponent(id)}/occupancy`);

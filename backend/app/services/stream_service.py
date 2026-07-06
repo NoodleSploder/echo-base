@@ -40,7 +40,12 @@ from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
 from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator
 from app.services.receiver_service import ReceiverService
-from app.services.signal_detection import PeakTracker, bin_to_frequency_offset_hz, find_peak_bins
+from app.services.signal_detection import (
+    OccupancyTracker,
+    PeakTracker,
+    bin_to_frequency_offset_hz,
+    find_peak_bins,
+)
 
 logger = logging.getLogger("echo_base.stream")
 
@@ -110,6 +115,10 @@ class _ReceiverCapture:
         self._signal_margin_db = 0.0
         self._signal_center_frequency_hz: int | None = None
         self._peak_tracker: PeakTracker | None = None
+        self._occupancy_enabled = False
+        self._occupancy_margin_db = 0.0
+        self._occupancy_center_frequency_hz: int | None = None
+        self._occupancy_tracker: OccupancyTracker | None = None
         self._handle: IqStreamHandle | None = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -122,6 +131,7 @@ class _ReceiverCapture:
             and not self._aprs_enabled
             and not self._same_enabled
             and not self._signal_detection_enabled
+            and not self._occupancy_enabled
         )
 
     @property
@@ -151,6 +161,35 @@ class _ReceiverCapture:
     def disable_signal_detection(self) -> None:
         self._signal_detection_enabled = False
         self._peak_tracker = None
+
+    def enable_occupancy(self, margin_db: float, center_frequency_hz: int | None) -> None:
+        self._occupancy_enabled = True
+        self._occupancy_margin_db = margin_db
+        self._occupancy_center_frequency_hz = center_frequency_hz
+        self._occupancy_tracker = OccupancyTracker(num_bins=FFT_SIZE)
+
+    def disable_occupancy(self) -> None:
+        self._occupancy_enabled = False
+        self._occupancy_tracker = None
+
+    def occupancy_snapshot(self) -> dict | None:
+        """A point-in-time read of current per-bin occupancy, for the
+        REST `GET .../occupancy` endpoint -- not pushed as events, since
+        it's a continuously-updated gauge to poll, not discrete
+        occurrences like SignalDetected."""
+        if self._occupancy_tracker is None or self._handle is None:
+            return None
+        sample_rate_hz = self._handle.sample_rate_hz
+        percentages = self._occupancy_tracker.occupancy_percent()
+        frequencies = [
+            (self._occupancy_center_frequency_hz or 0)
+            + bin_to_frequency_offset_hz(i, len(percentages), sample_rate_hz)
+            for i in range(len(percentages))
+        ]
+        return {
+            "frequencies_hz": frequencies,
+            "occupancy_percent": percentages.tolist(),
+        }
 
     def add_spectrum_subscriber(self, queue: asyncio.Queue[bytes]) -> None:
         self._spectrum_subscribers.add(queue)
@@ -210,7 +249,9 @@ class _ReceiverCapture:
                 imag = (samples[1::2] - 127.5) / 127.5
                 complex_samples = real + 1j * imag
 
-                need_fft = self._spectrum_subscribers or self._signal_detection_enabled
+                need_fft = (
+                    self._spectrum_subscribers or self._signal_detection_enabled or self._occupancy_enabled
+                )
                 if need_fft and len(complex_samples) >= FFT_SIZE:
                     windowed = complex_samples[-FFT_SIZE:] * window
                     spectrum = np.fft.fftshift(np.fft.fft(windowed))
@@ -222,6 +263,10 @@ class _ReceiverCapture:
 
                     if self._signal_detection_enabled:
                         self._detect_signals(magnitude_db, sample_rate_hz)
+
+                    if self._occupancy_enabled:
+                        assert self._occupancy_tracker is not None
+                        self._occupancy_tracker.record_frame(magnitude_db, self._occupancy_margin_db)
 
                 for mode, subscribers in list(self._audio_subscribers.items()):
                     if not subscribers:
@@ -464,6 +509,30 @@ class StreamService:
                 return
             capture.disable_signal_detection()
             await self._drop_if_idle(receiver_id)
+
+    async def enable_occupancy(
+        self, receiver_id: str, margin_db: float, center_frequency_hz: int | None
+    ) -> None:
+        """Continuously tracks per-bin occupancy (see
+        `signal_detection.OccupancyTracker`) -- a gauge to poll via
+        `get_occupancy`, not events, since it's a running state rather
+        than discrete occurrences."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_occupancy(margin_db, center_frequency_hz)
+
+    async def disable_occupancy(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_occupancy()
+            await self._drop_if_idle(receiver_id)
+
+    def get_occupancy(self, receiver_id: str) -> dict | None:
+        """None if occupancy tracking isn't enabled for this receiver."""
+        capture = self._captures.get(receiver_id)
+        return capture.occupancy_snapshot() if capture is not None else None
 
     def is_active(self, receiver_id: str) -> bool:
         """Whether IQ is actually being captured for this receiver right now

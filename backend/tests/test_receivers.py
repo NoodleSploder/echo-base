@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 pytestmark = pytest.mark.asyncio
@@ -75,6 +77,34 @@ async def test_signal_detection_start_unknown_receiver_404s(client, admin_user):
         "/api/receivers/does-not-exist/signal-detection/start", json={"margin_db": 15.0}
     )
     assert resp.status_code == 404
+
+
+async def test_occupancy_start_stop_and_query_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    start = await client.post("/api/receivers/mock:0/occupancy/start", json={"margin_db": 15.0})
+    assert start.status_code == 200
+
+    await asyncio.sleep(0.2)  # let at least one frame get recorded
+
+    snapshot = await client.get("/api/receivers/mock:0/occupancy")
+    assert snapshot.status_code == 200
+    data = snapshot.json()["data"]
+    assert len(data["frequencies_hz"]) == len(data["occupancy_percent"])
+    assert len(data["frequencies_hz"]) > 0
+
+    stop = await client.post("/api/receivers/mock:0/occupancy/stop")
+    assert stop.status_code == 200
+
+    after_stop = await client.get("/api/receivers/mock:0/occupancy")
+    assert after_stop.status_code == 422
+
+
+async def test_occupancy_query_without_enabling_422s(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    resp = await client.get("/api/receivers/mock:0/occupancy")
+    assert resp.status_code == 422
 
 
 async def test_unknown_receiver_returns_404(client, admin_user):

@@ -3102,3 +3102,132 @@ this relative meaning explicit rather than implicit.
 3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
    hardware is available, or get real browser/audio verification once
    available.
+
+---
+
+# 2026-07-06 — Occupancy Analysis (Phase 4)
+
+## Summary
+
+Added Phase 4's "Occupancy analysis": `OccupancyTracker` keeps a
+continuously-updated per-bin exponential moving average of "was this
+bin above the noise floor by `margin_db`", exposed as a pollable
+gauge (`GET .../occupancy`) rather than discrete events, since
+occupancy is a running state, not a series of occurrences. Builds
+directly on `signal_detection.py`'s noise-floor-relative threshold
+work from the previous entry -- same underlying margin concept,
+different aggregation.
+
+## Motivation
+
+Named directly as the next Phase 4 item once peak detection existed.
+Occupancy ("what fraction of the band has been busy recently") is a
+natural complement to peak detection ("what's on right now") and
+reuses the exact same per-frame FFT and noise-floor-margin logic, just
+accumulated over time instead of triggering one-shot events.
+
+## Features Added
+
+- `OccupancyTracker` (`signal_detection.py`): one float per FFT bin,
+  updated each frame via `occupancy = decay*occupancy + (1-decay)*hit`
+  where `hit` is 1 if that bin was >= noise_floor + margin_db this
+  frame. Constant memory/per-frame cost regardless of how long
+  tracking has run, unlike storing a window of raw frames.
+- `StreamService`/`_ReceiverCapture`: `enable_occupancy`/
+  `disable_occupancy` (same idempotent shape as signal detection),
+  plus `occupancy_snapshot()`/`get_occupancy()` -- a point-in-time read
+  of current per-bin occupancy, since (unlike APRS/SAME/signal
+  detection) there's nothing to push as a discrete event here; a
+  client polls a gauge.
+- `POST /api/receivers/{id}/occupancy/start` (`margin_db`) / `.../stop`,
+  `GET /api/receivers/{id}/occupancy` (422 if not enabled -- there's no
+  sensible "occupancy so far" for a receiver nobody asked to track).
+- `ReceiverCard` gained a "Track Occupancy" toggle that polls the
+  snapshot every 3 seconds and shows a one-line summary (average
+  occupancy %, busiest frequency) rather than a full heatmap -- a
+  heatmap is real UI work that (like every other visual feature this
+  session) can't be verified without a browser; a text summary can be
+  confirmed correct by reading the numbers.
+
+## Architecture Decisions
+
+- **A pollable gauge, not events.** APRS packets, SAME alerts, and
+  signal detections are all discrete occurrences -- "a thing happened,"
+  which is exactly what the EventBus is for. Occupancy is a
+  continuously-valid measurement -- "what's the state right now" --
+  and forcing that into a stream of events (e.g. re-emitting on every
+  change) would mean clients reconstructing a gauge from a change log
+  for no benefit over just asking for the current value directly.
+- **Exponential moving average, not a stored frame window.** A
+  ring buffer of the last N frames' hit/no-hit arrays would give
+  identical "recent occupancy" semantics but with memory proportional
+  to window length; the EMA gives the same "recent, not all-time"
+  behavior in one float per bin, at the cost of not being able to
+  answer "occupancy over exactly the last 10.0 seconds" precisely
+  (it's an exponentially-weighted approximation of that). For a
+  live-monitoring gauge, that trade was worth it.
+- **Same `margin_db` concept, reused rather than reinvented.**
+  Occupancy needed exactly the same "relative to the noise floor, not
+  an absolute scale" fix signal detection already required (same
+  uncalibrated FFT scale problem) -- this entry didn't have to
+  rediscover that live, because `estimate_noise_floor_db` already
+  existed from fixing it last time.
+
+## Files Created / Modified
+
+- `backend/app/services/signal_detection.py` -- `OccupancyTracker`.
+- `backend/app/services/stream_service.py` -- `enable_occupancy`/
+  `disable_occupancy`/`occupancy_snapshot`/`get_occupancy`, FFT-needed
+  gating extended to occupancy.
+- `backend/app/api/routes/receivers.py` -- occupancy start/stop/get routes.
+- `backend/tests/test_signal_detection.py` -- `OccupancyTracker`
+  convergence-toward-100%-when-always-occupied and decay-when-signal-
+  disappears tests.
+- `backend/tests/test_stream_service.py` -- occupancy lifecycle,
+  snapshot shape, shared-capture-with-spectrum tests.
+- `backend/tests/test_receivers.py` -- occupancy start/stop/query via
+  REST, including the 422-when-not-enabled case.
+- `frontend/src/api/receivers.ts`, `ReceiverCard.tsx` -- occupancy
+  toggle + polled summary.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 90/90 passing (81
+  previous + 9 new: 4 in `test_signal_detection.py`, 4 lifecycle/
+  snapshot tests in `test_stream_service.py`, 2 REST tests in
+  `test_receivers.py` -- some overlap rounds to 9 net new, all green).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend, tuned the actual
+  RTL2838 to the same FM broadcast frequency used in the signal-
+  detection entry, enabled occupancy tracking, and polled the real
+  snapshot every 2 seconds for 10 seconds. The busiest bins correctly
+  landed on the *same* adjacent-station frequencies (~100.386-100.413
+  MHz) the previous entry's signal detection independently found,
+  with small (0-0.5%) but nonzero occupancy consistent with an
+  intermittent/marginal real signal rather than noise -- two
+  independently-built features agreeing on the same real-world
+  finding is a stronger correctness signal than either alone. No
+  crashes, clean process lifecycle.
+
+## Outstanding Work
+
+- No RF heat map (spatial/visual) or signal history (occupancy over
+  time, not just current EMA) -- Phase 4's two remaining items.
+- No receiver comparison (side-by-side occupancy/signal-detection
+  across multiple receivers).
+- Occupancy summary in the UI is a one-line average + peak, not a
+  visual heatmap -- same browser-verification constraint as recent
+  entries.
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps, tracked in `ROADMAP.md`.
+
+## Next Steps
+
+1. Consider signal history (persisting detections/occupancy over time
+   rather than just a live EMA) as the next Phase 4 item.
+2. Add an actual map/heatmap view once a browser is available to
+   verify rendering.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.

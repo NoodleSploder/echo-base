@@ -1,10 +1,13 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import {
+  getOccupancy,
   startAprsDecoding,
+  startOccupancy,
   startReceiver,
   startSameDecoding,
   startSignalDetection,
   stopAprsDecoding,
+  stopOccupancy,
   stopReceiver,
   stopSameDecoding,
   stopSignalDetection,
@@ -48,6 +51,11 @@ export function ReceiverCard({
   const [signalDetectionEnabled, setSignalDetectionEnabled] = useState(false);
   const [signalDetectionBusy, setSignalDetectionBusy] = useState(false);
   const [marginDb, setMarginDb] = useState(15);
+  const [occupancyEnabled, setOccupancyEnabled] = useState(false);
+  const [occupancyBusy, setOccupancyBusy] = useState(false);
+  const [occupancySummary, setOccupancySummary] = useState<{ avgPercent: number; peakFrequencyHz: number } | null>(
+    null,
+  );
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -127,6 +135,47 @@ export function ReceiverCard({
       setSignalDetectionBusy(false);
     }
   }
+
+  async function handleToggleOccupancy() {
+    setOccupancyBusy(true);
+    try {
+      if (occupancyEnabled) {
+        await stopOccupancy(receiver.id);
+        setOccupancySummary(null);
+      } else {
+        await startOccupancy(receiver.id, marginDb);
+      }
+      setOccupancyEnabled((prev) => !prev);
+    } finally {
+      setOccupancyBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!occupancyEnabled) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const snapshot = await getOccupancy(receiver.id);
+        if (cancelled) return;
+        const avgPercent =
+          snapshot.occupancy_percent.reduce((sum, v) => sum + v, 0) / snapshot.occupancy_percent.length;
+        const peakIndex = snapshot.occupancy_percent.reduce(
+          (best, v, i) => (v > snapshot.occupancy_percent[best] ? i : best),
+          0,
+        );
+        setOccupancySummary({ avgPercent, peakFrequencyHz: snapshot.frequencies_hz[peakIndex] });
+      } catch {
+        // Transient poll failure; keep showing the last good reading.
+      }
+    }
+    void poll();
+    const interval = setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [occupancyEnabled, receiver.id]);
 
   async function handleToggleRecording() {
     setRecordingBusy(true);
@@ -307,6 +356,29 @@ export function ReceiverCard({
             >
               {signalDetectionEnabled ? "Signal Detection On" : "Detect Signals"}
             </button>
+          </div>
+        )}
+
+        {supportsAudio && (
+          <div className="border-t border-base-700 pt-3">
+            <button
+              onClick={() => void handleToggleOccupancy()}
+              disabled={occupancyBusy}
+              className={`w-full rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                occupancyEnabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Tracks what fraction of the band has been occupied recently"
+            >
+              {occupancyEnabled ? "Occupancy Tracking On" : "Track Occupancy"}
+            </button>
+            {occupancySummary && (
+              <p className="mt-1 text-xs text-slate-400">
+                avg {occupancySummary.avgPercent.toFixed(1)}% occupied · busiest{" "}
+                {(occupancySummary.peakFrequencyHz / 1e6).toFixed(4)} MHz
+              </p>
+            )}
           </div>
         )}
 

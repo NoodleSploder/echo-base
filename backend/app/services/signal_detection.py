@@ -78,3 +78,31 @@ class PeakTracker:
                 new_bins.add(bin_index)
                 self._last_triggered_at[bucket] = now
         return new_bins
+
+
+class OccupancyTracker:
+    """Tracks, per FFT bin, what fraction of recent frames had that bin
+    above the noise floor by `margin_db` -- an exponential moving
+    average per bin rather than a stored history of frames, so memory
+    and per-frame cost stay constant regardless of how long occupancy
+    has been tracked.
+
+    `decay` controls the effective averaging window: with frames
+    arriving every ~20ms (`stream_service.READ_SAMPLES` at typical
+    capture rates), `decay=0.995` has a half-life of
+    ln(2)/ln(1/0.995) =~ 140 frames =~ 2.8 seconds -- recent enough to
+    reflect current band activity, not so short that a single frame's
+    noise dominates the reading.
+    """
+
+    def __init__(self, num_bins: int, decay: float = 0.995) -> None:
+        self._decay = decay
+        self._occupancy = np.zeros(num_bins, dtype=np.float64)
+
+    def record_frame(self, magnitude_db: np.ndarray, margin_db: float) -> None:
+        threshold_db = estimate_noise_floor_db(magnitude_db) + margin_db
+        hits = (magnitude_db >= threshold_db).astype(np.float64)
+        self._occupancy = self._decay * self._occupancy + (1 - self._decay) * hits
+
+    def occupancy_percent(self) -> np.ndarray:
+        return self._occupancy * 100

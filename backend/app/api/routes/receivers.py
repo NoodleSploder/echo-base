@@ -5,6 +5,7 @@ from dataclasses import asdict, replace
 from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user, get_receiver_service, get_stream_service, require_role
+from app.core.exceptions import ValidationAppError
 from app.db.models.user import User, UserRole
 from app.plugins.receiver import ReceiverStatus
 from app.schemas.common import ok
@@ -202,3 +203,38 @@ async def stop_signal_detection(
 ) -> dict:
     await stream_service.disable_signal_detection(receiver_id)
     return ok({"message": "Signal detection disabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/occupancy/start")
+async def start_occupancy(
+    receiver_id: str,
+    payload: SignalDetectionRequest,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    status = await service.status(receiver_id)  # raises ReceiverNotFoundError if unknown
+    await stream_service.enable_occupancy(receiver_id, payload.margin_db, status.frequency_hz)
+    return ok({"message": "Occupancy tracking enabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/occupancy/stop")
+async def stop_occupancy(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await stream_service.disable_occupancy(receiver_id)
+    return ok({"message": "Occupancy tracking disabled.", "receiver_id": receiver_id})
+
+
+@router.get("/{receiver_id}/occupancy")
+async def get_occupancy(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(get_current_user),
+) -> dict:
+    snapshot = stream_service.get_occupancy(receiver_id)
+    if snapshot is None:
+        raise ValidationAppError(f"Occupancy tracking is not enabled for '{receiver_id}'.")
+    return ok(snapshot)

@@ -332,3 +332,50 @@ async def test_signal_detected_event_reports_absolute_frequency():
     magnitude_db2 = magnitude_db.copy()
     capture._detect_signals(magnitude_db2, sample_rate_hz=240_000)
     assert len(emitted) == 1
+
+
+async def test_enable_occupancy_starts_and_stops_capture(client):
+    stream_service = app.state.stream_service
+
+    await stream_service.enable_occupancy("mock:0", margin_db=15.0, center_frequency_hz=None)
+    assert "mock:0" in stream_service._captures
+
+    await asyncio.sleep(0.2)  # should run its occupancy loop over noise without crashing
+    assert "mock:0" in stream_service._captures
+
+    await stream_service.disable_occupancy("mock:0")
+    assert "mock:0" not in stream_service._captures
+
+
+async def test_get_occupancy_returns_none_when_not_enabled(client):
+    stream_service = app.state.stream_service
+    assert stream_service.get_occupancy("mock:0") is None
+
+
+async def test_get_occupancy_returns_snapshot_once_enabled(client):
+    stream_service = app.state.stream_service
+
+    await stream_service.enable_occupancy("mock:0", margin_db=15.0, center_frequency_hz=100_000_000)
+    try:
+        await asyncio.sleep(0.2)  # let at least one frame get recorded
+        snapshot = stream_service.get_occupancy("mock:0")
+        assert snapshot is not None
+        assert len(snapshot["frequencies_hz"]) == len(snapshot["occupancy_percent"])
+        assert len(snapshot["frequencies_hz"]) > 0
+    finally:
+        await stream_service.disable_occupancy("mock:0")
+
+
+async def test_occupancy_and_spectrum_share_one_capture(client):
+    stream_service = app.state.stream_service
+
+    queue = await stream_service.subscribe_spectrum("mock:0")
+    await stream_service.enable_occupancy("mock:0", margin_db=15.0, center_frequency_hz=None)
+    try:
+        assert len(stream_service._captures) == 1
+    finally:
+        await stream_service.disable_occupancy("mock:0")
+        assert "mock:0" in stream_service._captures  # spectrum subscriber keeps it alive
+        await stream_service.unsubscribe_spectrum("mock:0", queue)
+
+    assert "mock:0" not in stream_service._captures

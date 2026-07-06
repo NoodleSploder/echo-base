@@ -1,6 +1,11 @@
 import numpy as np
 
-from app.services.signal_detection import PeakTracker, bin_to_frequency_offset_hz, find_peak_bins
+from app.services.signal_detection import (
+    OccupancyTracker,
+    PeakTracker,
+    bin_to_frequency_offset_hz,
+    find_peak_bins,
+)
 
 
 def _synthetic_spectrum(peak_bins: dict[int, float], size: int = 64, floor_db: float = -80.0) -> np.ndarray:
@@ -75,3 +80,31 @@ def test_peak_tracker_treats_different_buckets_independently():
     tracker = PeakTracker(bucket_width_bins=8, cooldown_seconds=5.0)
     assert tracker.filter_new({10}, now=0.0) == {10}
     assert tracker.filter_new({10, 50}, now=1.0) == {50}  # 10 still cooling down, 50 is new
+
+
+def test_occupancy_tracker_starts_at_zero():
+    tracker = OccupancyTracker(num_bins=64, decay=0.9)
+    assert (tracker.occupancy_percent() == 0).all()
+
+
+def test_occupancy_tracker_converges_toward_100_for_always_occupied_bin():
+    tracker = OccupancyTracker(num_bins=64, decay=0.9)
+    spectrum = _synthetic_spectrum({32: -10.0})  # bin 32 always well above the floor
+    for _ in range(200):
+        tracker.record_frame(spectrum, margin_db=30.0)
+    occupancy = tracker.occupancy_percent()
+    assert occupancy[32] > 99.0
+    assert occupancy[0] < 1.0  # never-occupied bins stay near zero
+
+
+def test_occupancy_tracker_decays_when_signal_disappears():
+    tracker = OccupancyTracker(num_bins=64, decay=0.9)
+    occupied = _synthetic_spectrum({32: -10.0})
+    quiet = _synthetic_spectrum({})
+    for _ in range(100):
+        tracker.record_frame(occupied, margin_db=30.0)
+    high_water_mark = tracker.occupancy_percent()[32]
+    for _ in range(100):
+        tracker.record_frame(quiet, margin_db=30.0)
+    assert tracker.occupancy_percent()[32] < high_water_mark
+    assert tracker.occupancy_percent()[32] < 1.0
