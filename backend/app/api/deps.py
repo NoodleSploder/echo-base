@@ -14,6 +14,7 @@ from app.db.models.user import User, UserRole
 from app.db.session import get_db
 from app.plugins.manager import PluginManager
 from app.services.receiver_service import ReceiverService
+from app.services.spectrum_service import SpectrumService
 
 
 def get_settings(request: Request) -> Settings:
@@ -30,6 +31,10 @@ def get_plugin_manager(request: Request) -> PluginManager:
 
 def get_receiver_service(request: Request) -> ReceiverService:
     return request.app.state.receiver_service
+
+
+def get_spectrum_service(request: Request) -> SpectrumService:
+    return request.app.state.spectrum_service
 
 
 async def authenticate(

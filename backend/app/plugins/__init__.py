@@ -3,7 +3,7 @@ from app.plugins.base import Plugin, PluginContext
 from app.plugins.dashboard import DashboardPlugin
 from app.plugins.decoder import DecoderPlugin
 from app.plugins.radio import RadioPlugin
-from app.plugins.receiver import ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
+from app.plugins.receiver import IqStreamHandle, ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
 
 __all__ = [
     "Plugin",
@@ -11,6 +11,7 @@ __all__ = [
     "ReceiverPlugin",
     "ReceiverDescriptor",
     "ReceiverStatus",
+    "IqStreamHandle",
     "RadioPlugin",
     "DecoderPlugin",
     "DashboardPlugin",

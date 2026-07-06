@@ -1,10 +1,9 @@
 """RTL-SDR receiver plugin.
 
 Discovers RTL-SDR dongles via the `rtl_test` command-line tool (part of
-the rtl-sdr project) and models basic lifecycle/tuning state. Actual IQ
-sample streaming is not implemented yet -- see ROADMAP.md Phase 2/4 --
-so `start()` only marks a device as claimed/streaming for the purposes
-of the dashboard and future decoder wiring.
+the rtl-sdr project) and models basic lifecycle/tuning state. Raw IQ
+streaming (for live spectrum display) shells out to `rtl_sdr` the same
+way discovery shells out to `rtl_test` -- see `open_iq_stream` below.
 """
 from __future__ import annotations
 
@@ -12,17 +11,38 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from app.plugins import PluginContext, ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
+from app.plugins import IqStreamHandle, PluginContext, ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
 
 
 @dataclass
 class _DeviceState:
     descriptor: ReceiverDescriptor
+    index: int
     state: str = "idle"
     frequency_hz: int | None = None
     sample_rate_hz: int | None = 2_048_000
     bandwidth_hz: int | None = None
     gain: str | float = "auto"
+
+
+class _RtlSdrIqStream:
+    """Wraps a running `rtl_sdr ... -` subprocess emitting raw uint8 I/Q pairs on stdout."""
+
+    def __init__(self, process: subprocess.Popen, sample_rate_hz: int) -> None:
+        self._process = process
+        self.sample_rate_hz = sample_rate_hz
+
+    def read(self, n: int) -> bytes:
+        assert self._process.stdout is not None
+        return self._process.stdout.read(n)
+
+    def close(self) -> None:
+        if self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
 
 
 class RtlSdrReceiverPlugin(ReceiverPlugin):
@@ -52,18 +72,21 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
             self.logger.warning("RTL-SDR discovery failed: %s", exc)
             return []
 
-        descriptors = self._parse_devices(f"{result.stdout}\n{result.stderr}")
+        parsed = self._parse_devices(f"{result.stdout}\n{result.stderr}")
 
         # Preserve live state for devices that are still present; drop the rest.
-        self._devices = {d.id: self._devices.get(d.id, _DeviceState(descriptor=d)) for d in descriptors}
-        return descriptors
+        self._devices = {
+            descriptor.id: self._devices.get(descriptor.id, _DeviceState(descriptor=descriptor, index=index))
+            for descriptor, index in parsed
+        }
+        return [descriptor for descriptor, _ in parsed]
 
     @staticmethod
-    def _parse_devices(output: str) -> list[ReceiverDescriptor]:
+    def _parse_devices(output: str) -> list[tuple[ReceiverDescriptor, int]]:
         if "No supported devices found" in output:
             return []
 
-        descriptors: list[ReceiverDescriptor] = []
+        parsed: list[tuple[ReceiverDescriptor, int]] = []
         for raw_line in output.splitlines():
             line = raw_line.strip()
             if not line or ":" not in line:
@@ -79,16 +102,15 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
             else:
                 description, serial = remainder, None
 
-            descriptors.append(
-                ReceiverDescriptor(
-                    id=f"rtl_sdr:{serial or index_part}",
-                    name=description.strip(),
-                    driver="rtl_sdr",
-                    serial=serial,
-                    capabilities={"tunable": True, "iq_streaming": False},
-                )
+            descriptor = ReceiverDescriptor(
+                id=f"rtl_sdr:{serial or index_part}",
+                name=description.strip(),
+                driver="rtl_sdr",
+                serial=serial,
+                capabilities={"tunable": True, "iq_streaming": True},
             )
-        return descriptors
+            parsed.append((descriptor, int(index_part)))
+        return parsed
 
     def _require(self, receiver_id: str) -> _DeviceState:
         try:
@@ -139,3 +161,25 @@ class RtlSdrReceiverPlugin(ReceiverPlugin):
             gain=device.gain,
             detail=None,
         )
+
+    def open_iq_stream(self, receiver_id: str) -> IqStreamHandle:
+        device = self._require(receiver_id)
+        binary = shutil.which("rtl_sdr")
+        if binary is None:
+            raise RuntimeError("rtl_sdr binary not found on PATH; install rtl-sdr to enable live spectrum.")
+
+        # Untuned receivers still get a usable spectrum preview rather
+        # than requiring the user to tune before a waterfall appears.
+        frequency_hz = device.frequency_hz or 100_000_000
+        sample_rate_hz = device.sample_rate_hz or 2_048_000
+
+        args = [binary, "-d", str(device.index), "-f", str(frequency_hz), "-s", str(sample_rate_hz)]
+        if isinstance(device.gain, int | float) or (isinstance(device.gain, str) and device.gain != "auto"):
+            args += ["-g", str(device.gain)]
+        args.append("-")  # write raw samples to stdout
+
+        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.logger.info(
+            "Opened IQ stream for '%s' (%s Hz @ %s S/s).", receiver_id, frequency_hz, sample_rate_hz
+        )
+        return _RtlSdrIqStream(process, sample_rate_hz)

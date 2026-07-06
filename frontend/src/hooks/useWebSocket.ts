@@ -47,3 +47,57 @@ export function useEventStream(enabled: boolean) {
 
   return { events, connected };
 }
+
+// Codes the backend closes with intentionally (see spectrum.py): not
+// worth retrying since neither condition resolves on its own.
+const SPECTRUM_NO_RETRY_CODES = new Set([4401, 4404, 4405]);
+
+export function useSpectrumStream(receiverId: string | null) {
+  const [frame, setFrame] = useState<Float32Array | null>(null);
+  const [connected, setConnected] = useState(false);
+  const socketRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    setFrame(null);
+    setConnected(false);
+    if (!receiverId) return;
+    const id = receiverId;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    function connect() {
+      if (cancelled) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      const socket = new WebSocket(
+        `${protocol}://${window.location.host}/ws/spectrum/${encodeURIComponent(id)}`,
+      );
+      socket.binaryType = "arraybuffer";
+      socketRef.current = socket;
+
+      socket.onopen = () => setConnected(true);
+      socket.onclose = (event) => {
+        setConnected(false);
+        if (!cancelled && !SPECTRUM_NO_RETRY_CODES.has(event.code)) {
+          retryTimer = setTimeout(connect, 3000);
+        }
+      };
+      socket.onerror = () => socket.close();
+      socket.onmessage = (message) => {
+        if (message.data instanceof ArrayBuffer) {
+          setFrame(new Float32Array(message.data));
+        }
+      };
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimer);
+      socketRef.current?.close();
+    };
+  }, [receiverId]);
+
+  return { frame, connected };
+}

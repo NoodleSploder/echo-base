@@ -29,7 +29,26 @@ _MOCK_PLUGIN_DIR.mkdir(parents=True)
 (_MOCK_PLUGIN_DIR / "plugin.py").write_text(
     '''
 """In-memory receiver plugin used only by the backend test suite."""
+import os
+
 from app.plugins import ReceiverDescriptor, ReceiverPlugin, ReceiverStatus
+
+
+class MockIqStream:
+    """Deterministic-enough fake IQ source so SpectrumService can be tested
+    without real SDR hardware."""
+
+    def __init__(self, sample_rate_hz):
+        self.sample_rate_hz = sample_rate_hz
+        self._closed = False
+
+    def read(self, n):
+        if self._closed:
+            return b""
+        return os.urandom(n)
+
+    def close(self):
+        self._closed = True
 
 
 class MockReceiverPlugin(ReceiverPlugin):
@@ -71,6 +90,9 @@ class MockReceiverPlugin(ReceiverPlugin):
 
     def device_status(self, receiver_id):
         return ReceiverStatus(id=receiver_id, **self._state)
+
+    def open_iq_stream(self, receiver_id):
+        return MockIqStream(self._state["sample_rate_hz"] or 2_048_000)
 '''
 )
 

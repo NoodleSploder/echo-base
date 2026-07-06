@@ -93,3 +93,8 @@ class ReceiverService:
     async def status(self, receiver_id: str) -> ReceiverStatus:
         plugin = await self._resolve(receiver_id)
         return await asyncio.to_thread(plugin.device_status, receiver_id)
+
+    async def resolve_plugin(self, receiver_id: str) -> ReceiverPlugin:
+        """Exposes plugin lookup for callers that need to drive the plugin
+        directly, e.g. SpectrumService opening a raw IQ stream."""
+        return await self._resolve(receiver_id)

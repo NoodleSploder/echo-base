@@ -16,3 +16,4 @@ PyYAML==6.0.3
 PyJWT==2.13.0
 bcrypt==5.0.0
 python-multipart==0.0.32
+numpy==2.2.1

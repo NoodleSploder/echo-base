@@ -839,3 +839,189 @@ every finding on the existing codebase, and wired both into
    land.
 4. Get real browser verification of frontend work once a display or
    headless browser is available in this environment.
+
+---
+
+# 2026-07-06 — Live IQ Streaming and a Real Spectrum Monitor
+
+## Summary
+
+Closed the single most-repeated outstanding item in this diary: chose
+and implemented an IQ streaming transport, wired it to the actual
+attached RTL-SDR hardware on this machine, and made the Spectrum
+Monitor dashboard widget show a real, live, server-computed FFT
+instead of decorative sample noise.
+
+## Motivation
+
+Every recent entry's "Next Steps" named this as the top blocker for
+real spectrum widgets and a genuinely live waterfall. It also unblocks
+future decoder work (FT8, APRS, etc. all need raw samples), so it was
+worth doing as a real vertical slice rather than another mock.
+
+## Features Added
+
+Backend (`backend/`):
+
+- `ReceiverPlugin.open_iq_stream(receiver_id) -> IqStreamHandle`
+  (`app/plugins/receiver.py`): new optional plugin capability --
+  returns a small protocol object (`read(n)`/`close()`) wrapping
+  whatever the plugin uses to produce raw interleaved-uint8 I/Q bytes.
+  Defaults to `NotImplementedError`, which the rest of the stack
+  treats as "no live spectrum for this receiver" rather than an error.
+- `plugins/rtl_sdr/plugin.py`: implements it by shelling out to
+  `rtl_sdr -d <index> -f <freq> -s <rate> [-g <gain>] -` (same
+  CLI-tool-not-librtlsdr-binding approach `discover()` already uses
+  with `rtl_test`), streaming raw samples to stdout. Untuned receivers
+  default to 100 MHz so a spectrum preview works before the user tunes
+  anything. Device index (needed for `-d`) is now tracked per
+  `_DeviceState`, parsed alongside id/name/serial in `_parse_devices`.
+- `app/services/spectrum_service.py` (`SpectrumService`): for each
+  receiver with at least one subscriber, runs a background thread that
+  reads raw IQ off the plugin's stream, applies a Hann window, computes
+  an FFT (`numpy`), converts to dB magnitude, downsamples to a fixed
+  512 output bins, and hands the frame back to the event loop via
+  `call_soon_threadsafe` -- the same thread-to-loop handoff pattern
+  `EventBus.emit` already established. Capture starts lazily on first
+  subscriber and stops on last unsubscribe, so an unwatched dashboard
+  doesn't tie up a physical SDR.
+- `GET /ws/spectrum/{receiver_id}` (`app/api/routes/spectrum.py`): a
+  per-receiver WebSocket (distinct from the single shared `/ws/events`
+  socket) that authenticates the same way, subscribes to
+  `SpectrumService`, and streams each computed frame as a raw binary
+  `Float32Array` (512 * 4 bytes) -- no JSON envelope, since this is a
+  high-frequency binary stream, not a REST-shaped response. Closes with
+  app-specific codes (4404 unknown receiver, 4405 receiver doesn't
+  support streaming) so the frontend can decide whether to retry.
+- `numpy` added to `requirements.txt` -- the FFT math is generic
+  (any future receiver plugin's raw IQ goes through the same
+  `SpectrumService`), not specific to the rtl_sdr plugin, so it lives
+  in the core backend dependencies.
+
+Frontend (`frontend/`):
+
+- `useSpectrumStream(receiverId)` (`hooks/useWebSocket.ts`): opens
+  `/ws/spectrum/{id}`, parses each binary message into a
+  `Float32Array`, reconnects on drop with backoff -- except for the
+  backend's intentional close codes, which aren't worth retrying.
+- `useFirstReceiver()` (new): picks the first discovered receiver so
+  single-receiver widgets have something to stream from without a
+  picker UI yet (multi-receiver selection remains a ROADMAP.md item).
+- `SpectrumCanvas` now accepts an optional `liveFrame` prop: when
+  present, it min/max-normalizes the real dB values and draws the same
+  trace + waterfall it already drew for synthetic data, so this was a
+  data-source swap, not a new rendering path.
+- `SpectrumMonitorWidget` now uses `useFirstReceiver` +
+  `useSpectrumStream` and drops its `sample` badge once a real frame
+  is flowing, falling back to the decorative animation if no receiver
+  supports streaming yet. `SpectrumOverviewWidget` was deliberately
+  left on sample data -- it's framed as a full-band ("Span: 1.8 GHz")
+  overview, which a single RTL-SDR's ~2 MHz capture can't honestly
+  represent; wiring it up needs either a wideband receiver or explicit
+  per-band tuning, not this pass's plumbing.
+
+## Architecture Decisions
+
+- **Binary WebSocket frames, not JSON, and a dedicated
+  per-receiver socket, not `/ws/events`.** FFT frames are
+  high-frequency and numeric; encoding 512 floats as JSON would be
+  needlessly larger and slower to parse, and multiplexing them through
+  the single shared event socket would mean every dashboard client
+  receives every receiver's spectrum whether it's looking at that
+  widget or not. This was the concrete decision this diary's "decide
+  on an IQ streaming transport" item was waiting on.
+- **FFT computed server-side, not shipped to the browser as raw IQ.**
+  Keeps the wire format small and fixed-size regardless of sample
+  rate, and matches how every comparable web SDR front-end (e.g.
+  OpenWebRX) splits the work: server does DSP, browser only renders.
+- **Capture lifecycle is subscriber-counted, not tied to
+  start/stop/tune.** A receiver can be "streaming" (per
+  `ReceiverStatus.state`) without anyone watching its spectrum, and a
+  spectrum viewer shouldn't have to first call `/start`. Whether to
+  unify these two "streaming" concepts (device lifecycle vs. spectrum
+  subscription) is left as an open question for when a real decoder
+  needs exclusive access to the same raw IQ.
+- **`IqStreamHandle` is a `Protocol`, not a base class.** Plugins
+  producing IQ via wildly different mechanisms (subprocess pipe today;
+  a librtlsdr/SoapySDR binding, or a network socket to a remote
+  receiver, later) only need to duck-type `read`/`close` and a
+  `sample_rate_hz` attribute -- no shared implementation to inherit.
+
+## Files Created / Modified
+
+- `backend/app/plugins/receiver.py` -- `IqStreamHandle` protocol,
+  `ReceiverPlugin.open_iq_stream`.
+- `backend/app/plugins/__init__.py` -- exports `IqStreamHandle`.
+- `backend/app/services/spectrum_service.py` (new)
+- `backend/app/services/receiver_service.py` -- `resolve_plugin()`
+  (exposes plugin lookup to `SpectrumService`).
+- `backend/app/api/routes/spectrum.py` (new), `backend/app/api/router.py`
+- `backend/app/api/deps.py` -- `get_spectrum_service`
+- `backend/app/main.py` -- constructs `SpectrumService`, stops all
+  active captures on shutdown.
+- `backend/requirements.txt` -- `numpy`.
+- `backend/tests/conftest.py` -- mock receiver plugin gained
+  `open_iq_stream` (`MockIqStream`, synthetic `os.urandom` bytes) so
+  `SpectrumService` is testable without real SDR hardware.
+- `backend/tests/test_spectrum_service.py` (new)
+- `plugins/rtl_sdr/plugin.py` -- `open_iq_stream`, device index
+  tracking, `iq_streaming: True` capability flag.
+- `frontend/src/hooks/useWebSocket.ts` -- `useSpectrumStream`
+- `frontend/src/hooks/useFirstReceiver.ts` (new)
+- `frontend/src/components/common/SpectrumCanvas.tsx` -- `liveFrame` prop
+- `frontend/src/components/dashboard/SpectrumMonitorWidget.tsx` --
+  wired to real data.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 22/22 passing (19
+  previous + 3 new `test_spectrum_service.py` cases: subscribing
+  yields a correctly-sized FFT frame from the mock plugin's synthetic
+  IQ, unsubscribing the last subscriber tears the worker down, and
+  subscribing to an unknown receiver raises `ReceiverNotFoundError`).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings as
+  last entry, no new ones); `tsc -b && vite build` clean.
+- **Real hardware, not just the mock**: restarted the live backend
+  process on this machine (it was serving actual traffic on the
+  public hostname; briefly interrupted to load the new code), then
+  used a small script with the `websockets` library to log in, open
+  `ws://localhost:8811/ws/spectrum/rtl_sdr:00000001`, and read frames
+  back from the actual attached RTL2838 dongle -- confirmed 512-bin
+  float32 frames with sane, changing magnitude ranges (spot-checked
+  ~0-46 dB across several runs). Confirmed via `ps`/backend logs that
+  the `rtl_sdr` subprocess is spawned on first subscribe and fully
+  reaped (no lingering zombie) after the client disconnects.
+- No display/headless browser available in this environment, so the
+  dashboard widget's actual on-screen rendering of live frames (vs.
+  the WebSocket data itself, which was verified) is still unconfirmed
+  by eye.
+
+## Outstanding Work
+
+- Only `rtl_sdr` implements `open_iq_stream`; any future receiver
+  plugin (SoapySDR, etc.) needs its own implementation to get a live
+  Spectrum Monitor.
+- No decoder yet consumes this raw IQ path (FT8/APRS/etc. are still
+  Phase 3+ sample-data widgets) -- `SpectrumService` and
+  `open_iq_stream` were built generically enough to serve that later,
+  but nothing does yet.
+- Device-lifecycle "streaming" (`start`/`stop`) and spectrum-subscriber
+  "streaming" are two independent concepts right now; whether/how to
+  unify them is an open question, noted above.
+- No multi-receiver picker for the Spectrum Monitor -- it always shows
+  whichever receiver `useFirstReceiver` finds first.
+- Still no browser-based visual verification available in this
+  environment.
+
+## Next Steps
+
+1. Add a receiver picker to `SpectrumMonitorWidget` once more than one
+   streaming-capable receiver is commonly attached.
+2. Start Phase 3 (Radio Manager / Hamlib integration) or a first real
+   decoder (FT8 is the most-requested per the dashboard's existing
+   Digital Decodes widget) -- both now have a real raw-IQ source to
+   build on.
+3. Get real browser verification of the dashboard once a display or
+   headless browser is available in this environment.
+4. Decide whether `start`/`stop` and spectrum subscription should share
+   one underlying "is this receiver's hardware claimed" concept.

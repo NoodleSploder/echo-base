@@ -1,9 +1,20 @@
 import { useEffect, useRef } from "react";
 
-// Animated sample spectrum trace + waterfall -- decorative only, not
-// real spectrum data (see docs/PLUGIN_API.md / ROADMAP.md Phase 4).
-export function SpectrumCanvas({ height = 260 }: { height?: number }) {
+const SYNTHETIC_BINS = 200;
+
+// Renders either a real FFT magnitude frame (see useSpectrumStream) or,
+// when none is available, an animated decorative trace + waterfall
+// (see docs/PLUGIN_API.md / ROADMAP.md Phase 4 -- IQ streaming).
+export function SpectrumCanvas({
+  height = 260,
+  liveFrame = null,
+}: {
+  height?: number;
+  liveFrame?: Float32Array | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const liveFrameRef = useRef<Float32Array | null>(null);
+  liveFrameRef.current = liveFrame;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -12,7 +23,31 @@ export function SpectrumCanvas({ height = 260 }: { height?: number }) {
 
     let frame = 0;
     const waterfallRows: number[][] = [];
-    const bins = 200;
+
+    function syntheticRow(): number[] {
+      const row: number[] = [];
+      for (let i = 0; i < SYNTHETIC_BINS; i++) {
+        const base = Math.sin(i / 14 + frame / 20) * 0.15 + 0.25;
+        const peak =
+          Math.sin(i / 3.3 + frame / 9) > 0.97 || Math.sin(i / 5.1 - frame / 13) > 0.98
+            ? Math.random() * 0.6
+            : 0;
+        const noise = Math.random() * 0.08;
+        row.push(Math.min(1, Math.max(0, base + peak + noise)));
+      }
+      return row;
+    }
+
+    function normalizedLiveRow(live: Float32Array): number[] {
+      let min = Infinity;
+      let max = -Infinity;
+      for (const value of live) {
+        if (value < min) min = value;
+        if (value > max) max = value;
+      }
+      const range = Math.max(max - min, 1e-6);
+      return Array.from(live, (value) => (value - min) / range);
+    }
 
     function tick() {
       const rect = canvas!.getBoundingClientRect();
@@ -26,13 +61,10 @@ export function SpectrumCanvas({ height = 260 }: { height?: number }) {
       const traceHeight = Math.floor(h * 0.35);
       const waterfallHeight = h - traceHeight;
 
-      const row: number[] = [];
-      for (let i = 0; i < bins; i++) {
-        const base = Math.sin(i / 14 + frame / 20) * 0.15 + 0.25;
-        const peak = Math.sin(i / 3.3 + frame / 9) > 0.97 || Math.sin(i / 5.1 - frame / 13) > 0.98 ? Math.random() * 0.6 : 0;
-        const noise = Math.random() * 0.08;
-        row.push(Math.min(1, Math.max(0, base + peak + noise)));
-      }
+      const live = liveFrameRef.current;
+      const row = live ? normalizedLiveRow(live) : syntheticRow();
+      const bins = row.length;
+
       waterfallRows.unshift(row);
       if (waterfallRows.length > waterfallHeight) waterfallRows.length = waterfallHeight;
 

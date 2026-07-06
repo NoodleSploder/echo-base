@@ -9,7 +9,7 @@ draft interface in docs/PLUGIN_API.md.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from app.plugins.base import Plugin
 
@@ -36,6 +36,24 @@ class ReceiverStatus:
     bandwidth_hz: int | None = None
     gain: str | float | None = None
     detail: str | None = None
+
+
+class IqStreamHandle(Protocol):
+    """A running raw-IQ capture a plugin has started for one receiver.
+
+    Samples are interleaved unsigned 8-bit I/Q pairs (the format
+    `rtl_sdr` and most similar command-line SDR tools emit), read in
+    blocking chunks by ``SpectrumService`` from a background thread --
+    never from the asyncio event loop.
+    """
+
+    sample_rate_hz: int
+
+    def read(self, n: int) -> bytes:
+        """Block until at least some bytes are available; return b"" on EOF."""
+        ...
+
+    def close(self) -> None: ...
 
 
 class ReceiverPlugin(Plugin):
@@ -66,4 +84,14 @@ class ReceiverPlugin(Plugin):
     def device_status(self, receiver_id: str) -> ReceiverStatus:
         """Per-device status. Distinct from the inherited `Plugin.status()`,
         which reports plugin-level (not per-device) health."""
+        raise NotImplementedError
+
+    def open_iq_stream(self, receiver_id: str) -> IqStreamHandle:
+        """Start a raw-IQ capture for live spectrum display.
+
+        Optional: plugins that can't stream raw samples (or haven't
+        implemented it yet) should leave this raising
+        NotImplementedError, which SpectrumService treats as "no live
+        spectrum available for this receiver" rather than an error.
+        """
         raise NotImplementedError

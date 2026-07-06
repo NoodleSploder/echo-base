@@ -11,6 +11,7 @@ from app.api.routes import (
     plugins,
     receiver_profiles,
     receivers,
+    spectrum,
     system,
     users,
 )
@@ -25,3 +26,4 @@ api_router.include_router(receiver_profiles.router)
 api_router.include_router(plugins.router)
 api_router.include_router(events.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(spectrum.router)
