@@ -230,10 +230,10 @@ Completed
 - Live waterfall / spectrum displays (real FFT data, `SpectrumMonitorWidget`/`ReceiverTileGridWidget`)
 - Signal detection / peak analysis (`SignalDetected` events: noise-floor-relative threshold, bucket+cooldown re-trigger suppression -- see `signal_detection.py`)
 - Occupancy analysis (`OccupancyTracker`: per-bin EMA of noise-floor-relative occupancy, pollable via `GET /api/receivers/{id}/occupancy`)
+- Signal history (`SignalDetectionRecord` DB table, survives restarts, queryable via `GET /api/receivers/{id}/signal-history` -- no retention/pruning policy yet)
 
 Remaining
 
-- Signal history (occupancy/detections over time, not just the current live EMA)
 - RF heat maps
 - Receiver comparison
 

@@ -42,3 +42,15 @@ export const stopOccupancy = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/occupancy/stop`);
 export const getOccupancy = (id: string) =>
   api.get<OccupancySnapshot>(`/api/receivers/${encodeURIComponent(id)}/occupancy`);
+
+export interface SignalHistoryRecord {
+  frequency_hz: number | null;
+  frequency_offset_hz: number;
+  power_db: number;
+  detected_at: string;
+}
+
+export const getSignalHistory = (id: string, minutes = 60) =>
+  api.get<SignalHistoryRecord[]>(
+    `/api/receivers/${encodeURIComponent(id)}/signal-history?minutes=${minutes}`,
+  );

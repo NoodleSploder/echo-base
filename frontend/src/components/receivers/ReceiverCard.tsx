@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   getOccupancy,
+  getSignalHistory,
   startAprsDecoding,
   startOccupancy,
   startReceiver,
@@ -56,6 +57,7 @@ export function ReceiverCard({
   const [occupancySummary, setOccupancySummary] = useState<{ avgPercent: number; peakFrequencyHz: number } | null>(
     null,
   );
+  const [historyCount, setHistoryCount] = useState<number | null>(null);
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -129,12 +131,32 @@ export function ReceiverCard({
         await stopSignalDetection(receiver.id);
       } else {
         await startSignalDetection(receiver.id, marginDb);
+        setHistoryCount(null);
       }
       setSignalDetectionEnabled((prev) => !prev);
     } finally {
       setSignalDetectionBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!signalDetectionEnabled) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const records = await getSignalHistory(receiver.id, 60);
+        if (!cancelled) setHistoryCount(records.length);
+      } catch {
+        // Transient poll failure; keep showing the last good count.
+      }
+    }
+    void poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [signalDetectionEnabled, receiver.id]);
 
   async function handleToggleOccupancy() {
     setOccupancyBusy(true);
@@ -357,6 +379,9 @@ export function ReceiverCard({
               {signalDetectionEnabled ? "Signal Detection On" : "Detect Signals"}
             </button>
           </div>
+        )}
+        {signalDetectionEnabled && historyCount !== null && (
+          <p className="text-xs text-slate-400">{historyCount} detection(s) in the last hour</p>
         )}
 
         {supportsAudio && (

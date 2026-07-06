@@ -19,6 +19,11 @@ from app.schemas.receiver import (
     TuneRequest,
 )
 from app.services.receiver_service import ReceiverService
+from app.services.signal_history import (
+    DEFAULT_HISTORY_LIMIT,
+    DEFAULT_HISTORY_MINUTES,
+    query_signal_history,
+)
 from app.services.stream_service import StreamService
 
 router = APIRouter(prefix="/api/receivers", tags=["receivers"])
@@ -238,3 +243,24 @@ async def get_occupancy(
     if snapshot is None:
         raise ValidationAppError(f"Occupancy tracking is not enabled for '{receiver_id}'.")
     return ok(snapshot)
+
+
+@router.get("/{receiver_id}/signal-history")
+async def get_signal_history(
+    receiver_id: str,
+    minutes: int = DEFAULT_HISTORY_MINUTES,
+    limit: int = DEFAULT_HISTORY_LIMIT,
+    _: User = Depends(get_current_user),
+) -> dict:
+    records = await query_signal_history(receiver_id, minutes=minutes, limit=limit)
+    return ok(
+        [
+            {
+                "frequency_hz": r.frequency_hz,
+                "frequency_offset_hz": r.frequency_offset_hz,
+                "power_db": r.power_db,
+                "detected_at": r.detected_at.isoformat(),
+            }
+            for r in records
+        ]
+    )

@@ -3231,3 +3231,116 @@ accumulated over time instead of triggering one-shot events.
 3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
    hardware is available, or get real browser/audio verification once
    available.
+
+---
+
+# 2026-07-06 — Signal History (Phase 4)
+
+## Summary
+
+Closed Phase 4's last remaining item that doesn't need new hardware or
+a browser: `SignalDetected` events are now persisted to a real
+database table (`signal_detections`) via an `EventBus` subscriber, and
+queryable per-receiver/time-range via `GET
+/api/receivers/{id}/signal-history`. Distinct from the existing
+`/api/events` history, which is in-memory, bounded to 500 events
+*of any type*, and gone on restart -- verified live that these records
+specifically survive a full backend restart.
+
+## Motivation
+
+The previous entry named this as the next Phase 4 item. It's also the
+most natural, since `SignalDetected` events already flow through the
+`EventBus`, and persistence just means subscribing another handler to
+it (the same pattern `ConnectionManager`'s WebSocket fan-out already
+is) -- no new capture logic, no new StreamService concept.
+
+## Features Added
+
+- `SignalDetectionRecord` (`app/db/models/signal_detection.py`) +
+  migration `0004_add_signal_detections.py`: receiver_id, frequency_hz,
+  frequency_offset_hz, power_db, detected_at (indexed on both
+  receiver_id and detected_at for the time-range queries below).
+- `app/services/signal_history.py`: `persist_signal_detected` (an
+  `EventBus` handler, subscribed in `main.py`'s lifespan alongside
+  `ConnectionManager`) and `query_signal_history(receiver_id, minutes,
+  limit)`.
+- `GET /api/receivers/{id}/signal-history?minutes=60&limit=200`.
+- `ReceiverCard` shows a "N detection(s) in the last hour" line,
+  polled every 5 seconds while signal detection is enabled.
+
+## Architecture Decisions
+
+- **A plain `EventBus` subscriber, not something `StreamService` calls
+  directly.** `StreamService` already has no idea whether anything is
+  listening to what it emits -- that's the entire point of routing
+  through the event bus rather than a direct method call. Persistence
+  is just one more thing that happens to be listening, exactly like
+  the WebSocket fan-out already is; `StreamService` didn't need to
+  change at all.
+- **A dedicated table, not reusing the in-memory `EventBus.recent()`
+  history.** That history is intentionally generic (every event type,
+  fixed-size ring buffer, gone on restart) -- fine for "what just
+  happened," wrong for "how many signals has this receiver seen in the
+  last hour," which needs to survive restarts and be filterable by
+  receiver and time range, i.e. actual query capability a deque can't
+  give you.
+
+## Files Created / Modified
+
+- `backend/app/db/models/signal_detection.py` (new),
+  `backend/app/db/models/__init__.py` -- registers the new model.
+- `backend/alembic/versions/0004_add_signal_detections.py` (new)
+- `backend/app/services/signal_history.py` (new)
+- `backend/app/main.py` -- subscribes `persist_signal_detected` to the
+  `EventBus`.
+- `backend/app/api/routes/receivers.py` -- `GET .../signal-history`.
+- `backend/tests/test_signal_history.py` (new) -- persist/query round
+  trip, per-receiver filtering, limit handling, auth requirement, and
+  an end-to-end test that enables real signal detection on the mock
+  plugin's capture and waits for a genuinely-persisted, REST-queryable
+  record rather than stubbing the subscriber.
+- `frontend/src/api/receivers.ts`, `ReceiverCard.tsx` -- history count
+  readout.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 95/95 passing (90
+  previous + 5 new, including the end-to-end persistence test above).
+- Frontend: `npm run lint` clean (same 2 pre-existing warnings, none
+  new); `tsc -b && vite build` clean.
+- **Real hardware, restart survival specifically tested**: restarted
+  the live backend, tuned the actual RTL2838 to the same FM broadcast
+  frequency used in prior entries, ran signal detection for 15
+  seconds -- 51 real detections persisted, landing in the same
+  adjacent-station frequency range (~100.35-100.39MHz) found by both
+  the signal-detection and occupancy-analysis entries. Then
+  **restarted the backend again** and re-queried the same endpoint:
+  all 51 records were still there. This is the specific property that
+  distinguishes this from the existing in-memory event history, so it
+  was the specific thing verified, not just "does it save at all."
+  Test data (those 51 detection rows) remains in `data/echo-base.db`
+  as evidence, same as the recording-engine entries left real WAV/IQ
+  files.
+
+## Outstanding Work
+
+- No UI for browsing signal history beyond a live count -- no
+  frequency/time chart, no export.
+- No automatic pruning/retention policy -- the table grows unbounded
+  as long as signal detection runs.
+- No RF heat maps or receiver comparison yet -- Phase 4's two
+  remaining items, both meaningfully UI-heavy (a heat map is exactly
+  the kind of thing that needs a browser to verify).
+- Same Radio-Manager-blocked-on-hardware and
+  browser-verification-blocked-on-display gaps, tracked in `ROADMAP.md`.
+
+## Next Steps
+
+1. Add retention/pruning for `signal_detections` before it grows
+   unbounded in a long-running deployment.
+2. Add an actual map/heatmap view (Phase 4's remaining items) once a
+   browser is available to verify rendering.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.
