@@ -3531,3 +3531,59 @@ decoding, so "one click" wasn't really one click yet.
    occupancy once profiles have a natural way to carry a margin_db
    (they don't yet -- out of scope for this slice).
 2. Same environment blocks as ever (`ROADMAP.md`).
+
+## Added: Toast notification system (Phase 1)
+
+Picked up the last remaining Phase 1 frontend item: a notification
+system distinct from the raw event feed (Activity Feed/System Log
+widgets already show every event, forever -- toasts are for the
+handful worth interrupting the user for, and they go away on their
+own).
+
+- `context/ToastContext.tsx`: `ToastProvider`/`useToast()` -- a small
+  stack (max 5, oldest dropped), each auto-dismissing after 8s or on
+  manual dismiss.
+- `components/common/ToastContainer.tsx`: fixed bottom-right stack,
+  info/warning/danger variants.
+- `components/common/EventToastBridge.tsx`: watches the shared
+  `EventStreamContext` events (already deduped/capped at 50 by
+  `useEventStream`) and toasts exactly three event types --
+  `SameAlert` (a real NOAA/EAS emergency alert, rare and worth
+  surfacing), and `ReceiverStarted`/`ReceiverStopped` (confirmation of
+  an action the user just took). Deliberately *not* `AprsPacket` or
+  `SignalDetected` -- both fire often enough in normal operation that
+  toasting each one would just be noise on top of what the Activity
+  Feed already shows.
+- Both mounted once in `AppShell`, inside `EventStreamProvider` so
+  they share its one WebSocket connection rather than opening another.
+
+One real shape bug caught before it shipped: `ReceiverStarted`/
+`ReceiverStopped` events are emitted with `source="plugin:rtl_sdr"` --
+the actual receiver_id lives in `data.receiver_id`, confirmed by
+connecting to `/ws/events` directly and triggering a real start/stop.
+An early draft used `event.source` directly, which would have toasted
+"plugin:rtl_sdr started" instead of "rtl_sdr:00000001 started".
+
+## Verification
+
+- Frontend: `npm run lint` clean (3 warnings -- the 2 pre-existing
+  ones plus the same react-refresh-only-exports-components shape on
+  `ToastContext.tsx` that `AuthContext`/`EventStreamContext` already
+  have, not a new class of issue); `tsc -b && vite build` clean.
+- Backend: unchanged; `pytest` -- 95/95 passing (sanity check only).
+- **Real hardware/event shapes**: connected directly to `/ws/events`
+  and triggered a real receiver start/stop via the REST API, confirmed
+  the exact event shape (`source`/`data.receiver_id`) `EventToastBridge`
+  depends on. `SameAlert`'s `event_name`/`location_names` fields
+  cross-checked directly against `stream_service.py`'s `_decode_same`
+  (no live NOAA alert was received to trigger one for real -- same
+  environment block as every other real-decode-verification entry).
+- Could not visually verify toast rendering/stacking/dismissal itself
+  -- no browser available in this environment (`ROADMAP.md`'s Known
+  Environment Blocks).
+
+## Next Steps
+
+1. Accessibility and responsive-layout pass (Phase 1's last remaining
+   frontend item) -- needs a browser to verify properly.
+2. Same environment blocks as ever.

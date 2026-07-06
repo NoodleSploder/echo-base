@@ -112,11 +112,15 @@ Completed
 - Theme (dark, consistent with the command-center direction from the dev diary)
 - WebSocket client (shared event-stream context, auto-reconnect)
 - Login flow and system health / live activity widgets
+- Notification system (toast stack, distinct from the raw event feed --
+  SameAlert/ReceiverStarted/ReceiverStopped surface as dismissible,
+  auto-expiring toasts; high-frequency event types like
+  AprsPacket/SignalDetected deliberately don't, to avoid toast spam)
+- Receiver profile management UI (`ReceiverProfilesPanel`: create/apply/delete
+  plus suggested-preset "Add", see the receiver-profiles diary entries)
 
 Remaining
 
-- Notification system (toasts/alerts distinct from the raw event feed)
-- Receiver profile management UI
 - Accessibility and responsive-layout pass
 
 ---
