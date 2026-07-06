@@ -3912,3 +3912,53 @@ there).
 1. Same environment blocks as ever -- both profile-decoder and
    profile-detection-margin follow-ups are now done; next slice needs
    a fresh look at `ROADMAP.md`.
+
+## Added: USB hot-plug monitoring (Phase 2)
+
+Closes Phase 2's "USB hot-plug monitoring" item. Reuses
+`ReceiverService.discover()` (the same call `GET /api/receivers`
+already makes) on a timer rather than talking to hardware/udev
+directly, so it works for any receiver plugin, not just `rtl_sdr`.
+
+- `services/hotplug_monitor.py`: `HotplugMonitor.start()` seeds the
+  known-receiver set from an initial discovery *without* emitting
+  anything -- every receiver present at startup was already there,
+  not just plugged in, so treating all of them as "just connected"
+  would be noise. `check_once()` (run on a timer via `_loop`, default
+  every 10s -- `hotplug.poll_interval_seconds`) diffs the current
+  discovery against the known set and emits `ReceiverConnected`/
+  `ReceiverDisconnected` events for the difference.
+- Wired into `main.py`'s lifespan next to the other background tasks;
+  `hotplug_monitor.shutdown()` cancels its loop on teardown.
+- Frontend: `EventToastBridge` toasts both event types (info for
+  connected, warning for disconnected) -- rare enough events to be
+  worth interrupting the user for, same reasoning as
+  `ReceiverStarted`/`Stopped`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 114/114 passing (2 new,
+  against fakes rather than the mock plugin fixture since this is
+  pure diffing logic and the mock plugin's `discover()` always
+  returns the same fixed receiver: seeding emits nothing, and a
+  three-step discovery sequence correctly emits one `ReceiverConnected`
+  then one `ReceiverDisconnected` as a fake receiver appears then a
+  different one disappears).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: restarted the live backend with the real RTL2838
+  already attached, confirmed via `GET /api/events` that no spurious
+  `ReceiverConnected` event was emitted for it -- the seed-silently
+  behavior working correctly against the one real receiver actually
+  available here. Testing the disconnected side against real hardware
+  isn't possible in this environment (nothing can physically unplug
+  the dongle), so that half relies on the fake-based unit tests above
+  -- noted as the specific gap, same shape as every other
+  real-hardware-partial-verification entry in this diary.
+
+## Next Steps
+
+1. Receiver inventory persistence (Phase 2's other remaining SDR
+   Discovery item) -- track "last seen" for receivers no longer
+   currently attached, rather than only ever showing live discovery.
+2. Same environment blocks as ever.

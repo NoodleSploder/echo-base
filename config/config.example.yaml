@@ -56,3 +56,8 @@ history:
   # doesn't grow unbounded in a long-running deployment.
   signal_detection_retention_days: 30
   prune_interval_hours: 24
+
+hotplug:
+  # How often to re-scan for newly-appeared/disappeared receivers,
+  # emitting ReceiverConnected/ReceiverDisconnected events.
+  poll_interval_seconds: 10.0

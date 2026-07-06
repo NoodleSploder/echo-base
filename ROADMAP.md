@@ -149,13 +149,15 @@ Remaining
 Completed
 
 - RTL-SDR detection (via `rtl_test`, in the `rtl_sdr` plugin)
+- USB hot-plug monitoring (`HotplugMonitor`: polls `ReceiverService.discover()`
+  on a timer, emits `ReceiverConnected`/`ReceiverDisconnected` events -- surfaced
+  as toasts via `EventToastBridge`)
 
 Remaining
 
 - SoapySDR detection
 - Airspy / SDRplay / HackRF / PlutoSDR / LimeSDR plugins
 - Receiver inventory persistence (currently discovered live, not stored)
-- USB hot-plug monitoring
 
 ---
 

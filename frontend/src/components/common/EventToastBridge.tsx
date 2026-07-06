@@ -37,6 +37,10 @@ export function EventToastBridge() {
         const receiverId = String(event.data.receiver_id ?? event.source);
         const verb = event.type === "ReceiverStarted" ? "started" : "stopped";
         pushToast({ variant: "info", title: `${receiverId} ${verb}` });
+      } else if (event.type === "ReceiverConnected") {
+        pushToast({ variant: "info", title: `${event.source} connected` });
+      } else if (event.type === "ReceiverDisconnected") {
+        pushToast({ variant: "warning", title: `${event.source} disconnected` });
       }
     }
     // Rebuilt from the (size-capped, at most 50) events list each run,

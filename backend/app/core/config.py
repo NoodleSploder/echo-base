@@ -81,6 +81,12 @@ class RecordingSettings(BaseModel):
     directory: str = str(DATA_DIR / "recordings")
 
 
+class HotplugSettings(BaseModel):
+    # How often to re-run receiver discovery looking for
+    # newly-appeared/disappeared devices (see hotplug_monitor.py).
+    poll_interval_seconds: float = 10.0
+
+
 class HistorySettings(BaseModel):
     # `signal_detections` grows one row per detection for as long as
     # signal detection runs on any receiver -- unlike `aprs_stations`
@@ -127,6 +133,7 @@ class Settings(BaseSettings):
     plugins: PluginSettings = Field(default_factory=PluginSettings)
     recordings: RecordingSettings = Field(default_factory=RecordingSettings)
     history: HistorySettings = Field(default_factory=HistorySettings)
+    hotplug: HotplugSettings = Field(default_factory=HotplugSettings)
 
     @classmethod
     def settings_customise_sources(

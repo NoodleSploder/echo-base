@@ -27,6 +27,7 @@ from app.db.models.user import User, UserRole
 from app.plugins.manager import PluginManager
 from app.schemas.common import fail
 from app.services.aprs_stations import persist_aprs_station
+from app.services.hotplug_monitor import HotplugMonitor
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.scheduled_recording import ScheduledRecordingService
@@ -130,6 +131,7 @@ async def lifespan(app: FastAPI):
     triggered_recording_service = TriggeredRecordingService(recording_service, receiver_service)
     event_bus.subscribe("SignalDetected", triggered_recording_service.handle_signal_detected)
     scheduled_recording_service = ScheduledRecordingService(recording_service, receiver_service)
+    hotplug_monitor = HotplugMonitor(receiver_service, event_bus)
 
     app.state.settings = settings
     app.state.event_bus = event_bus
@@ -140,8 +142,10 @@ async def lifespan(app: FastAPI):
     app.state.recording_service = recording_service
     app.state.triggered_recording_service = triggered_recording_service
     app.state.scheduled_recording_service = scheduled_recording_service
+    app.state.hotplug_monitor = hotplug_monitor
 
     await _bootstrap_admin(settings)
+    await hotplug_monitor.start(settings.hotplug.poll_interval_seconds)
 
     prune_task = asyncio.create_task(
         _prune_loop(settings.history.signal_detection_retention_days, settings.history.prune_interval_hours)
@@ -158,6 +162,7 @@ async def lifespan(app: FastAPI):
     prune_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await prune_task
+    hotplug_monitor.shutdown()
     scheduled_recording_service.shutdown()
     triggered_recording_service.shutdown()
     recording_service.shutdown()
