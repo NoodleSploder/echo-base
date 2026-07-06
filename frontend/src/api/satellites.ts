@@ -37,3 +37,12 @@ export const scheduleNextPassRecording = (receiverId: string, request: ScheduleN
     `/api/satellites/${encodeURIComponent(receiverId)}/schedule-next-pass`,
     request,
   );
+
+export interface FetchedTle {
+  name: string;
+  tle_line1: string;
+  tle_line2: string;
+}
+
+export const fetchTleByNoradId = (noradId: number) =>
+  api.get<FetchedTle>(`/api/satellites/tle/${noradId}`);

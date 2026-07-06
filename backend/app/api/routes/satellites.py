@@ -10,17 +10,43 @@ from app.api.deps import (
     get_current_user,
     get_receiver_service,
     get_scheduled_recording_service,
+    get_settings,
     require_role,
 )
+from app.core.config import Settings
 from app.core.exceptions import NotFoundError, ValidationAppError
 from app.db.models.user import User, UserRole
 from app.schemas.common import ok
+from app.services.n2yo import N2yoError, fetch_tle
 from app.services.receiver_service import ReceiverService
 from app.services.satellite_passes import InvalidTleError, find_passes
 from app.services.scheduled_recording import ScheduledRecordingService
 
 router = APIRouter(prefix="/api/satellites", tags=["satellites"])
 require_operator = require_role(UserRole.ADMINISTRATOR, UserRole.OPERATOR)
+
+
+@router.get("/tle/{norad_id}")
+async def get_tle(
+    norad_id: int,
+    settings: Settings = Depends(get_settings),
+    _: User = Depends(get_current_user),
+) -> dict:
+    """Fetches a current TLE from n2yo.com (free, registration
+    required) by NORAD catalog number -- requires `satellites.n2yo_api_key`
+    to be configured; 400s with a clear message if it isn't, rather
+    than a generic auth failure from n2yo itself."""
+    if not settings.satellites.n2yo_api_key:
+        raise ValidationAppError(
+            "No n2yo.com API key configured (satellites.n2yo_api_key). "
+            "Get a free key at https://www.n2yo.com/api/ or paste a TLE manually."
+        )
+    try:
+        name, tle_line1, tle_line2 = await fetch_tle(norad_id, settings.satellites.n2yo_api_key)
+    except N2yoError as exc:
+        raise ValidationAppError(str(exc)) from exc
+
+    return ok({"name": name, "tle_line1": tle_line1, "tle_line2": tle_line2})
 
 
 class PassPredictionRequest(BaseModel):

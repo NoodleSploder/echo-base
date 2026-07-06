@@ -87,6 +87,15 @@ class HotplugSettings(BaseModel):
     poll_interval_seconds: float = 10.0
 
 
+class SatelliteSettings(BaseModel):
+    # Free (registration required) API key from n2yo.com, used to fetch
+    # a satellite's current TLE by NORAD catalog number instead of
+    # requiring the user to paste TLE text by hand -- see
+    # services/n2yo.py. None (the default) just disables that
+    # convenience; manual TLE paste on the Satellites page still works.
+    n2yo_api_key: str | None = None
+
+
 class HistorySettings(BaseModel):
     # `signal_detections` grows one row per detection for as long as
     # signal detection runs on any receiver -- unlike `aprs_stations`
@@ -134,6 +143,7 @@ class Settings(BaseSettings):
     recordings: RecordingSettings = Field(default_factory=RecordingSettings)
     history: HistorySettings = Field(default_factory=HistorySettings)
     hotplug: HotplugSettings = Field(default_factory=HotplugSettings)
+    satellites: SatelliteSettings = Field(default_factory=SatelliteSettings)
 
     @classmethod
     def settings_customise_sources(

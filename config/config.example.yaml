@@ -61,3 +61,10 @@ hotplug:
   # How often to re-scan for newly-appeared/disappeared receivers,
   # emitting ReceiverConnected/ReceiverDisconnected events.
   poll_interval_seconds: 10.0
+
+satellites:
+  # Free API key from https://www.n2yo.com/api/ (registration
+  # required) -- lets the Satellites page fetch a current TLE by NORAD
+  # catalog number instead of pasting TLE text by hand. Leave unset to
+  # just disable that convenience; manual paste always works.
+  n2yo_api_key: null

@@ -375,6 +375,12 @@ Completed
   to the satellite's downlink frequency immediately, since the
   scheduler itself just records whatever the receiver is already on.
   A "Schedule Recording for Next Pass" control on `/satellites`.)
+- TLE auto-fetch (`services/n2yo.py`: fetches a current TLE by NORAD
+  catalog number from n2yo.com's free, registration-required API --
+  `GET /api/satellites/tle/{norad_id}`, needs `satellites.n2yo_api_key`
+  configured or 400s with a clear message pointing at
+  n2yo.com/api. A "Fetch by NORAD ID" control on `/satellites` next to
+  manual TLE paste, which still always works.)
 
 Remaining
 

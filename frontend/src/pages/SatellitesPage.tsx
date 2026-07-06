@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
+  fetchTleByNoradId,
   predictSatellitePasses,
   scheduleNextPassRecording,
   type SatellitePass,
@@ -12,11 +13,18 @@ import { Card } from "../components/common/Card";
 const RECORDING_MODES = ["fm", "am", "iq"];
 
 // TLEs go stale within 1-2 weeks -- this deliberately doesn't bundle
-// or fetch one (see satellite_passes.py's docstring); paste a current
-// one from a source like Celestrak (celestrak.org).
+// or fetch one (see satellite_passes.py's docstring). Either paste one
+// (e.g. from celestrak.org) or fetch by NORAD catalog number below,
+// which needs a free n2yo.com API key configured server-side
+// (satellites.n2yo_api_key) -- that button 400s with a clear message
+// if none is configured.
 export function SatellitesPage() {
   const [tleLine1, setTleLine1] = useState("");
   const [tleLine2, setTleLine2] = useState("");
+  const [noradId, setNoradId] = useState("");
+  const [tleName, setTleName] = useState<string | null>(null);
+  const [fetchTleBusy, setFetchTleBusy] = useState(false);
+  const [fetchTleError, setFetchTleError] = useState<string | null>(null);
   const [latitude, setLatitude] = useState("");
   const [longitude, setLongitude] = useState("");
   const [elevation, setElevation] = useState("0");
@@ -53,6 +61,25 @@ export function SatellitesPage() {
       hours: Number(hours) || 24,
       min_elevation_deg: Number(minElevation) || 10,
     };
+  }
+
+  async function handleFetchTle() {
+    const parsed = Number(noradId);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    setFetchTleBusy(true);
+    setFetchTleError(null);
+    try {
+      const result = await fetchTleByNoradId(parsed);
+      setTleLine1(result.tle_line1);
+      setTleLine2(result.tle_line2);
+      setTleName(result.name);
+    } catch {
+      setFetchTleError(
+        "Could not fetch TLE -- check the NORAD ID, or configure satellites.n2yo_api_key (a free key from n2yo.com/api) to enable this.",
+      );
+    } finally {
+      setFetchTleBusy(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -98,6 +125,29 @@ export function SatellitesPage() {
 
       <Card title="Predict Passes">
         <form onSubmit={(event) => void handleSubmit(event)} className="space-y-3 text-sm">
+          <div className="flex flex-wrap items-end gap-2 border-b border-base-700 pb-3">
+            <div className="flex flex-col gap-1">
+              <label className="text-xs text-slate-500">Fetch by NORAD ID</label>
+              <input
+                type="number"
+                value={noradId}
+                onChange={(event) => setNoradId(event.target.value)}
+                placeholder="e.g. 25338"
+                className="w-32 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleFetchTle()}
+              disabled={fetchTleBusy || !noradId}
+              className="rounded-md border border-base-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"
+              title="Fetches a current TLE from n2yo.com -- needs satellites.n2yo_api_key configured server-side"
+            >
+              {fetchTleBusy ? "Fetching..." : "Fetch TLE"}
+            </button>
+            {tleName && <span className="text-xs text-emerald-400">Loaded: {tleName}</span>}
+          </div>
+          {fetchTleError && <p className="text-xs text-red-400">{fetchTleError}</p>}
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             <input
               value={tleLine1}

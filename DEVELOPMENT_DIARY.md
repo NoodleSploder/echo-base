@@ -4378,3 +4378,59 @@ receiver is available.
    predicted range-rate, now that pass prediction's orbital math
    already exists to compute it from.
 2. Same environment blocks as ever for everything else.
+
+## Added: TLE auto-fetch from n2yo.com
+
+Follow-on to a user question about pulling satellite data from a free
+API. First checked the specific suggestion (AviationEdge's Satellite
+Tracker API, via its GitHub example repo) -- it's actually a paid
+commercial service requiring a subscription, not free. The user then
+pointed at n2yo.com's API instead, which genuinely is free (requires
+registration for an API key, but no cost) and offers exactly what's
+needed: fetch a satellite's current TLE by NORAD catalog number.
+
+- `services/n2yo.py`: `fetch_tle(norad_id, api_key)` -- calls n2yo's
+  `/rest/v1/satellite/tle/{id}` endpoint, parses the response, and
+  turns n2yo's own quirk (HTTP 200 with an empty/malformed body for
+  some bad requests, rather than a clean error status) into a real
+  `N2yoError` instead of silently propagating garbage.
+- New `satellites.n2yo_api_key` config setting (`None` by default --
+  the feature is opt-in and degrades to "just paste a TLE manually,"
+  never a hard requirement).
+- `GET /api/satellites/tle/{norad_id}`: 400s with a message pointing
+  at n2yo.com/api if no key is configured, rather than a confusing
+  downstream failure.
+- `httpx` moved from a test-only dependency to a real runtime one
+  (`requirements.txt`), since this is the first production code path
+  that makes an outbound HTTP call.
+- Frontend: a "Fetch by NORAD ID" control on `/satellites`, next to
+  (not replacing) manual TLE paste.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 159/159 passing (6 new:
+  parses a real-shaped n2yo response correctly, using
+  `httpx.MockTransport` to stand in for n2yo's actual HTTP responses
+  rather than a live call; raises on an unknown NORAD id, a non-JSON
+  response, and an HTTP error status; the REST route 400s cleanly
+  without a configured key and returns the fetched TLE correctly with
+  one monkeypatched in).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real check, with an honest limitation**: confirmed the real
+  deployed endpoint correctly 400s with the documented message when no
+  `n2yo_api_key` is configured (which is the actual state of this
+  environment). Could **not** verify the live fetch path against
+  n2yo.com's real servers -- that needs a registered account and API
+  key, which isn't available here. The mocked-response tests model
+  n2yo's documented API shape, not live behavior; this is the
+  specific gap, flagged rather than glossed over.
+
+## Next Steps
+
+1. If an n2yo.com API key becomes available, verify the live fetch
+   path for real (currently only mock-tested against the documented
+   response shape).
+2. Doppler tracking across a pass (Phase 9's remaining "Tracking"
+   item) is still open.
+3. Same environment blocks as ever for everything else.
