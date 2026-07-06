@@ -15,7 +15,16 @@ import {
   stopSignalDetection,
   tuneReceiver,
 } from "../../api/receivers";
-import { startRecording, startTriggeredRecording, stopRecording, stopTriggeredRecording } from "../../api/recordings";
+import {
+  cancelScheduledRecording,
+  listScheduledRecordings,
+  scheduleRecording,
+  startRecording,
+  startTriggeredRecording,
+  stopRecording,
+  stopTriggeredRecording,
+  type ScheduledRecordingJob,
+} from "../../api/recordings";
 import { useAudioPlayer } from "../../hooks/useAudioPlayer";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
@@ -62,6 +71,11 @@ export function ReceiverCard({
   const [captureStalled, setCaptureStalled] = useState(false);
   const [triggeredRecordingArmed, setTriggeredRecordingArmed] = useState(false);
   const [triggeredRecordingBusy, setTriggeredRecordingBusy] = useState(false);
+  const [scheduleStartAt, setScheduleStartAt] = useState("");
+  const [scheduleDuration, setScheduleDuration] = useState(60);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduledJobs, setScheduledJobs] = useState<ScheduledRecordingJob[]>([]);
 
   const state = status?.state ?? "idle";
   // Audio is derived from the same IQ capture as the spectrum widgets
@@ -272,6 +286,49 @@ export function ReceiverCard({
       setRecordingError("Could not toggle recording.");
     } finally {
       setRecordingBusy(false);
+    }
+  }
+
+  async function refreshScheduledJobs() {
+    try {
+      setScheduledJobs(await listScheduledRecordings(receiver.id));
+    } catch {
+      // Transient poll failure; keep showing the last good list.
+    }
+  }
+
+  useEffect(() => {
+    void refreshScheduledJobs();
+    const interval = setInterval(refreshScheduledJobs, 5000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [receiver.id]);
+
+  async function handleSchedule(event: FormEvent) {
+    event.preventDefault();
+    if (!scheduleStartAt) return;
+    const startAt = new Date(scheduleStartAt);
+    if (Number.isNaN(startAt.getTime())) return;
+    setScheduleBusy(true);
+    setScheduleError(null);
+    try {
+      await scheduleRecording(receiver.id, recordingMode, startAt.toISOString(), scheduleDuration);
+      setScheduleStartAt("");
+      await refreshScheduledJobs();
+    } catch {
+      setScheduleError("Could not schedule recording.");
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  async function handleCancelScheduled(jobId: string) {
+    setScheduleBusy(true);
+    try {
+      await cancelScheduledRecording(jobId);
+      await refreshScheduledJobs();
+    } finally {
+      setScheduleBusy(false);
     }
   }
 
@@ -525,6 +582,57 @@ export function ReceiverCard({
           </div>
         )}
         {recordingError && <p className="text-xs text-red-400">{recordingError}</p>}
+
+        {supportsAudio && (
+          <div className="space-y-1 border-t border-base-700 pt-3">
+            <form onSubmit={(event) => void handleSchedule(event)} className="flex flex-wrap items-center gap-2">
+              <input
+                type="datetime-local"
+                value={scheduleStartAt}
+                onChange={(event) => setScheduleStartAt(event.target.value)}
+                className="rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300"
+              />
+              <input
+                type="number"
+                min={1}
+                value={scheduleDuration}
+                onChange={(event) => setScheduleDuration(Number(event.target.value))}
+                title="Duration (seconds)"
+                className="w-16 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-300"
+              />
+              <button
+                type="submit"
+                disabled={scheduleBusy || !scheduleStartAt}
+                className="rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"
+              >
+                Schedule {recordingMode.toUpperCase()} Recording
+              </button>
+            </form>
+            {scheduleError && <p className="text-xs text-red-400">{scheduleError}</p>}
+            {scheduledJobs.filter((job) => job.status === "pending" || job.status === "recording").length >
+              0 && (
+              <ul className="space-y-1 text-xs text-slate-400">
+                {scheduledJobs
+                  .filter((job) => job.status === "pending" || job.status === "recording")
+                  .map((job) => (
+                    <li key={job.id} className="flex items-center justify-between gap-2">
+                      <span>
+                        {job.status === "recording" ? "● Recording" : new Date(job.start_at).toLocaleString()}{" "}
+                        · {job.mode.toUpperCase()} · {job.duration_seconds}s
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleCancelScheduled(job.id)}
+                        className="text-slate-500 hover:text-red-400"
+                      >
+                        Cancel
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </Card>
   );

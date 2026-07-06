@@ -343,15 +343,16 @@ Completed
   pipeline via `StreamService.register_playback` -- see `RecordingsWidget`)
 - Recording management (list/download/delete via `GET/DELETE /api/recordings`,
   `RecordingsWidget`)
+- Triggered recording ("record when signal detected" -- `TriggeredRecordingService`
+  arms a receiver to auto-record for a fixed duration on the next `SignalDetected` event)
+- Scheduled recording (start/stop at a wall-clock time -- `ScheduledRecordingService`,
+  in-memory only: a job is lost if the backend restarts before it fires)
 
 Remaining
 
 - Waterfall recording (a saved spectrogram/FFT-frame capture, distinct from
   raw IQ -- no concrete use case identified yet beyond what IQ replay already covers)
-- Scheduled recording
-- Triggered recording (e.g. "record when signal detected" -- `SignalDetected`
-  events already exist as the trigger source; wiring one to `RecordingService`
-  is the remaining piece)
+- Persisting scheduled recording jobs across a restart (currently in-memory only)
 
 ---
 

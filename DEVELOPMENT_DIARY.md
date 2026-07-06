@@ -3734,3 +3734,52 @@ and `RecordingService.start`/`stop` as the recording mechanism.
    capture a signal longer than one fixed `duration_seconds` window
    in actual field use.
 3. Same environment blocks as ever.
+
+## Added: Scheduled recording (Phase 8)
+
+Closes Phase 8's last concrete Remaining item. Same "reuse
+`RecordingService`, add only the glue" shape as `triggered_recording.py`
+-- here the trigger is a wall-clock timer instead of a `SignalDetected`
+event.
+
+- `services/scheduled_recording.py`: `ScheduledRecordingService.schedule`
+  creates an in-memory `ScheduledJob` and an `asyncio.create_task` that
+  sleeps until `start_at`, starts the recording, sleeps
+  `duration_seconds`, then stops it. `cancel(job_id)` works in either
+  phase -- cancelling before `start_at` just prevents it from ever
+  starting; cancelling while it's already recording actually stops the
+  in-progress recording rather than leaving it running forever with
+  nothing left to call `stop()` (caught via `except
+  asyncio.CancelledError` around the running phase specifically).
+  In-memory only, like triggered recording's armed state -- a job is
+  lost across a restart. Worth a real persistence + reconciliation
+  pass if this becomes something people rely on unattended, not a
+  blocker for "schedule one 10 minutes out and leave the tab open."
+- `POST /api/receivers/{id}/scheduled-recording`,
+  `GET .../scheduled-recordings`, `DELETE /api/scheduled-recordings/{id}`.
+- Frontend: `ReceiverCard` gets a compact schedule form (datetime-local
+  + duration-seconds inputs) plus a list of upcoming/in-progress jobs
+  with per-job Cancel, polled every 5s.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 109/109 passing (4 new:
+  real schedule->start->auto-stop round trip against the mock
+  plugin's capture, cancel-before-start prevents the recording,
+  cancel-while-recording actually stops it, auth-required check).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, full end-to-end**: tuned the actual RTL2838 to
+  100.3MHz, scheduled a recording 2 seconds out for a 4-second
+  duration, polled job status through `pending` -> `recording` ->
+  `done`, confirmed a real 312KB/3.26s WAV was produced, then deleted
+  it via the real API.
+
+## Next Steps
+
+1. Waterfall recording (Phase 8's remaining item) -- no concrete use
+   case identified yet beyond what IQ replay already covers; revisit
+   if a specific need comes up rather than building it speculatively.
+2. Persist scheduled-recording jobs (currently in-memory) if restart
+   survival becomes important.
+3. Same environment blocks as ever.

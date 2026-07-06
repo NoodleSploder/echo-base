@@ -26,3 +26,30 @@ export const startTriggeredRecording = (receiverId: string, mode: string, durati
   );
 export const stopTriggeredRecording = (receiverId: string) =>
   api.post<{ armed: boolean }>(`/api/receivers/${encodeURIComponent(receiverId)}/triggered-recording/stop`);
+
+export interface ScheduledRecordingJob {
+  id: string;
+  receiver_id: string;
+  mode: string;
+  start_at: string;
+  duration_seconds: number;
+  status: "pending" | "recording" | "done" | "failed" | "cancelled";
+}
+
+export const scheduleRecording = (
+  receiverId: string,
+  mode: string,
+  startAt: string,
+  durationSeconds: number,
+) =>
+  api.post<ScheduledRecordingJob>(`/api/receivers/${encodeURIComponent(receiverId)}/scheduled-recording`, {
+    mode,
+    start_at: startAt,
+    duration_seconds: durationSeconds,
+  });
+export const listScheduledRecordings = (receiverId: string) =>
+  api.get<ScheduledRecordingJob[]>(
+    `/api/receivers/${encodeURIComponent(receiverId)}/scheduled-recordings`,
+  );
+export const cancelScheduledRecording = (jobId: string) =>
+  api.delete<{ message: string }>(`/api/scheduled-recordings/${encodeURIComponent(jobId)}`);

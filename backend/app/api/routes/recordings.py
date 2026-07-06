@@ -5,6 +5,7 @@ decoder pipeline live receivers use.
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 from app.api.deps import (
     get_receiver_service,
     get_recording_service,
+    get_scheduled_recording_service,
     get_stream_service,
     get_triggered_recording_service,
     require_role,
@@ -22,6 +24,7 @@ from app.db.models.user import User, UserRole
 from app.schemas.common import ok
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
+from app.services.scheduled_recording import ScheduledJob, ScheduledRecordingService
 from app.services.stream_service import StreamService
 from app.services.triggered_recording import TriggeredRecordingService
 
@@ -37,6 +40,23 @@ class RecordingModeRequest(BaseModel):
 class TriggeredRecordingRequest(BaseModel):
     mode: str = "fm"
     duration_seconds: float = 10.0
+
+
+class ScheduledRecordingRequest(BaseModel):
+    mode: str = "fm"
+    start_at: datetime
+    duration_seconds: float = 60.0
+
+
+def _job_dict(job: ScheduledJob) -> dict:
+    return {
+        "id": job.id,
+        "receiver_id": job.receiver_id,
+        "mode": job.mode,
+        "start_at": job.start_at.isoformat(),
+        "duration_seconds": job.duration_seconds,
+        "status": job.status,
+    }
 
 
 def _playback_id(filename: str) -> str:
@@ -120,6 +140,36 @@ async def stop_triggered_recording(
 ) -> dict:
     service.disable(receiver_id)
     return ok({"armed": False, "receiver_id": receiver_id})
+
+
+@router.post("/api/receivers/{receiver_id}/scheduled-recording")
+async def schedule_recording(
+    receiver_id: str,
+    payload: ScheduledRecordingRequest,
+    service: ScheduledRecordingService = Depends(get_scheduled_recording_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    job = service.schedule(receiver_id, payload.mode, payload.start_at, payload.duration_seconds)
+    return ok(_job_dict(job))
+
+
+@router.get("/api/receivers/{receiver_id}/scheduled-recordings")
+async def list_scheduled_recordings(
+    receiver_id: str,
+    service: ScheduledRecordingService = Depends(get_scheduled_recording_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    return ok([_job_dict(job) for job in service.list_jobs(receiver_id)])
+
+
+@router.delete("/api/scheduled-recordings/{job_id}")
+async def cancel_scheduled_recording(
+    job_id: str,
+    service: ScheduledRecordingService = Depends(get_scheduled_recording_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    service.cancel(job_id)
+    return ok({"message": "Scheduled recording cancelled.", "id": job_id})
 
 
 @router.post("/api/recordings/{filename}/playback/start")
