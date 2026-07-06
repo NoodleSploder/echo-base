@@ -10,8 +10,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.core.exceptions import NotFoundError
 from app.plugins.receiver import ReceiverDescriptor
-from app.services.receiver_inventory import list_inventory, upsert_seen
+from app.services.receiver_inventory import list_inventory, set_location, upsert_seen
 
 pytestmark = pytest.mark.asyncio
 
@@ -65,4 +66,48 @@ async def test_inventory_via_rest_reflects_hotplug_monitor(client, admin_user):
 
 async def test_inventory_requires_auth(client):
     resp = await client.get("/api/receivers/inventory")
+    assert resp.status_code == 401
+
+
+async def test_set_location_requires_receiver_to_have_been_seen(client):
+    with pytest.raises(NotFoundError):
+        await set_location("never-seen:0", 38.9, -77.0, "Some Site")
+
+
+async def test_set_location_via_rest_reflects_in_inventory(client, admin_user):
+    from app.main import app
+
+    await client.post("/api/auth/login", json=admin_user)
+    hotplug_monitor = app.state.hotplug_monitor
+    await hotplug_monitor.check_once()  # seeds "mock:0" into inventory
+
+    resp = await client.put(
+        "/api/receivers/mock:0/location",
+        json={"latitude": 38.9072, "longitude": -77.0369, "site_name": "HQ Rooftop"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["site_name"] == "HQ Rooftop"
+    assert body["latitude"] == pytest.approx(38.9072)
+
+    inv_resp = await client.get("/api/receivers/inventory")
+    record = next(r for r in inv_resp.json()["data"] if r["receiver_id"] == "mock:0")
+    assert record["site_name"] == "HQ Rooftop"
+    assert record["longitude"] == pytest.approx(-77.0369)
+
+
+async def test_set_location_unknown_receiver_404s_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+    resp = await client.put(
+        "/api/receivers/never-seen:0/location",
+        json={"latitude": 0.0, "longitude": 0.0},
+    )
+    assert resp.status_code == 404
+
+
+async def test_set_location_requires_auth(client):
+    resp = await client.put(
+        "/api/receivers/mock:0/location",
+        json={"latitude": 0.0, "longitude": 0.0},
+    )
     assert resp.status_code == 401

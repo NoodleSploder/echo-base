@@ -21,13 +21,14 @@ from app.schemas.receiver import (
     GainRequest,
     PpmCorrectionRequest,
     ReceiverDescriptorSchema,
+    ReceiverLocationRequest,
     ReceiverStatusSchema,
     SampleRateRequest,
     ScanRequest,
     SignalDetectionRequest,
     TuneRequest,
 )
-from app.services.receiver_inventory import list_inventory
+from app.services.receiver_inventory import list_inventory, set_location
 from app.services.receiver_service import ReceiverService
 from app.services.signal_history import (
     DEFAULT_HISTORY_LIMIT,
@@ -95,9 +96,33 @@ async def get_receiver_inventory(
                 "first_seen_at": r.first_seen_at.isoformat(),
                 "last_seen_at": r.last_seen_at.isoformat(),
                 "attached": r.receiver_id in currently_attached,
+                "site_name": r.site_name,
+                "latitude": r.latitude,
+                "longitude": r.longitude,
             }
             for r in records
         ]
+    )
+
+
+@router.put("/{receiver_id}/location")
+async def put_receiver_location(
+    receiver_id: str,
+    payload: ReceiverLocationRequest,
+    _: User = Depends(require_operator),
+) -> dict:
+    """Set this receiver's physical site location for the Geospatial
+    Intelligence map's "Receiver Sites" layer -- operator-set, since a
+    plain RTL-SDR dongle has no GPS of its own. Requires the receiver
+    to already exist in inventory (i.e. have been seen at least once)."""
+    record = await set_location(receiver_id, payload.latitude, payload.longitude, payload.site_name)
+    return ok(
+        {
+            "receiver_id": record.receiver_id,
+            "site_name": record.site_name,
+            "latitude": record.latitude,
+            "longitude": record.longitude,
+        }
     )
 
 

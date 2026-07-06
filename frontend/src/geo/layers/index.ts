@@ -4,4 +4,5 @@
 // GeospatialPage and the map itself never change.
 import "./AprsStationsLayer";
 import "./AuroraLayer";
+import "./ReceiverSitesLayer";
 import "./SatelliteTrackLayer";

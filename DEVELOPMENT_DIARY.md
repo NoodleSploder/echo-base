@@ -4738,3 +4738,74 @@ math).
    the API-level pipeline is fully verified, but rendering on the map
    itself hasn't been screenshotted the way APRS/Satellite Track
    layers already were).
+
+## Added: Receiver Sites layer (map)
+
+Third real `MapLayer` this arc, and the first one whose underlying
+data didn't exist anywhere yet -- `receiver_inventory` only ever
+tracked "seen" (id/name/driver/serial/timestamps), never "located."
+Picked this over ADS-B/AIS position decoding as the next slice: those
+two are legitimately harder (CPR frame-pairing for Mode S, multi-type
+payload parsing for AIS) and were explicitly called out as deferred
+gaps in earlier diary entries, whereas Receiver Sites was a small,
+well-scoped addition that also directly unblocks the RF Coverage
+milestone (coverage modeling needs a site to model coverage *from*).
+
+**Deliberately operator-set, not inferred**: a plain RTL-SDR dongle
+has no GPS. `PUT /api/receivers/{id}/location` requires the receiver
+to already exist in `receiver_inventory` (i.e. have been seen at least
+once) -- a location on a receiver_id nobody's ever plugged in is
+meaningless, so `set_location` raises `NotFoundError` (404) rather
+than silently creating a row.
+
+**Frontend UX**: rather than a raw lat/lon form (finicky to get right
+by hand), the map sidebar's "Receiver Sites" panel is click-to-place --
+pick a receiver, click "Set location," then click anywhere on the map;
+the click is captured via a `placingSiteRef` (a ref mirroring the
+`placingSite` state, needed because the map's `click` handler is
+registered once in the mount effect and would otherwise close over a
+stale `false`), then confirmed with an optional site name and saved.
+On save, the `ReceiverSitesLayer` instance is looked up by id from
+`layersRef` and told to `refresh()` directly, the same "extra methods
+beyond the MapLayer interface for page-driven updates" pattern already
+used by `SatelliteTrackLayer.setSatellite()`.
+
+**Files added**: `backend/alembic/versions/0011_add_receiver_site_location.py`,
+`frontend/src/geo/layers/ReceiverSitesLayer.ts`. Existing files
+extended: `receiver_inventory.py` model/service (three nullable
+columns, `set_location`), `receivers.py` schema/route
+(`ReceiverLocationRequest`, `PUT .../location`), `api/receivers.ts`
+(the existing `ReceiverInventoryRecord` type gained the three fields
+rather than a duplicate type), `GeospatialPage.tsx`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 170/170 passing (4 new:
+  `NotFoundError` on an unseen receiver_id, a REST round-trip that
+  seeds `mock:0` via a real `HotplugMonitor.check_once()` then sets
+  and reads back its location, a 404 for an unknown receiver via REST,
+  and a 401-when-unauthenticated check).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real, live hardware**: found six stale `uvicorn` processes all
+  still bound (well, attempting to be) to port 8811 from earlier in
+  this session -- killed them all and started one clean instance.
+  Confirmed the real attached RTL-SDR (`rtl_sdr:00000001`, "Nooelec,
+  NESDR SMArt v5") via `POST /api/receivers/discover`, then exercised
+  the full location round-trip against it for real: `PUT .../location`
+  succeeded and the coordinates read back correctly via
+  `GET /api/receivers/inventory`; a location `PUT` against a
+  never-seen receiver_id correctly 404'd; an unauthenticated `PUT`
+  correctly 401'd. Have not visually confirmed the marker rendering on
+  `/map` itself (no browser in this environment), but every layer of
+  the actual data path is real, not mocked.
+
+## Next Steps
+
+1. RF Coverage modeling is now unblocked (a receiver can have a stored
+   site) but still needs the actual propagation math.
+2. Remaining NOAA SWPC datasets (solar wind, X-ray/proton flux, CME
+   alerts, radio blackouts) -- same adapter shape as Kp/Aurora.
+3. ADS-B/AIS position decoding remain the two biggest real gaps for
+   unlocking their respective map layers -- CPR frame-pairing and
+   multi-type AIS payload parsing, respectively.

@@ -1,5 +1,6 @@
 import L from "leaflet";
 import { useEffect, useRef, useState } from "react";
+import { getReceiverInventory, setReceiverLocation, type ReceiverInventoryRecord } from "../api/receivers";
 import { fetchTleByNoradId } from "../api/satellites";
 import { getKpIndex } from "../api/spaceWeather";
 import { createRegisteredLayers } from "../geo/LayerRegistry";
@@ -47,6 +48,36 @@ export function GeospatialPage() {
   const [trackedSatellite, setTrackedSatellite] = useState<string | null>(null);
 
   const [kp, setKp] = useState<{ value: number; timeTag: string } | null>(null);
+
+  const [receivers, setReceivers] = useState<ReceiverInventoryRecord[]>([]);
+  const [selectedReceiverId, setSelectedReceiverId] = useState("");
+  const [placingSite, setPlacingSite] = useState(false);
+  const [pendingSite, setPendingSite] = useState<{ lat: number; lon: number } | null>(null);
+  const [siteName, setSiteName] = useState("");
+  const [siteBusy, setSiteBusy] = useState(false);
+  const [siteError, setSiteError] = useState<string | null>(null);
+  const placingSiteRef = useRef(false);
+  useEffect(() => {
+    placingSiteRef.current = placingSite;
+  }, [placingSite]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function pollInventory() {
+      try {
+        const result = await getReceiverInventory();
+        if (!cancelled) setReceivers(result);
+      } catch {
+        // transient poll failure; keep showing whatever we last had
+      }
+    }
+    void pollInventory();
+    const interval = setInterval(pollInventory, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +137,12 @@ export function GeospatialPage() {
       // wrap() normalizes it back to -180..180 for display only.
       const wrapped = event.latlng.wrap();
       setCursor({ lat: wrapped.lat, lon: wrapped.lng });
+    });
+    map.on("click", (event: L.LeafletMouseEvent) => {
+      if (!placingSiteRef.current) return;
+      const wrapped = event.latlng.wrap();
+      setPendingSite({ lat: wrapped.lat, lon: wrapped.lng });
+      setPlacingSite(false);
     });
     mapRef.current = map;
 
@@ -172,6 +209,30 @@ export function GeospatialPage() {
       setSatelliteError("Could not fetch TLE -- check the NORAD ID or n2yo.com API key configuration.");
     } finally {
       setSatelliteBusy(false);
+    }
+  }
+
+  async function handleSaveSite() {
+    if (!pendingSite || !selectedReceiverId) return;
+    setSiteBusy(true);
+    setSiteError(null);
+    try {
+      await setReceiverLocation(
+        selectedReceiverId,
+        pendingSite.lat,
+        pendingSite.lon,
+        siteName.trim() || null,
+      );
+      const sitesLayer = layersRef.current.find((layer) => layer.id === "receiver-sites");
+      await sitesLayer?.refresh();
+      const inventory = await getReceiverInventory();
+      setReceivers(inventory);
+      setPendingSite(null);
+      setSiteName("");
+    } catch {
+      setSiteError("Could not save this receiver's location.");
+    } finally {
+      setSiteBusy(false);
     }
   }
 
@@ -272,6 +333,65 @@ export function GeospatialPage() {
           ) : (
             <p className="text-[11px] text-slate-500">Loading...</p>
           )}
+        </div>
+
+        <div className="border-t border-base-700 pt-3">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Receiver Sites
+          </h2>
+          <select
+            value={selectedReceiverId}
+            onChange={(event) => setSelectedReceiverId(event.target.value)}
+            className="mb-1 w-full rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-200"
+          >
+            <option value="">Select a receiver...</option>
+            {receivers.map((r) => (
+              <option key={r.receiver_id} value={r.receiver_id}>
+                {r.site_name ?? r.name} {r.attached ? "(attached)" : ""}
+              </option>
+            ))}
+          </select>
+          {pendingSite ? (
+            <div className="space-y-1">
+              <p className="text-[11px] text-slate-400">
+                {pendingSite.lat.toFixed(4)}, {pendingSite.lon.toFixed(4)}
+              </p>
+              <input
+                type="text"
+                value={siteName}
+                onChange={(event) => setSiteName(event.target.value)}
+                placeholder="Site name (optional)"
+                className="w-full rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500"
+              />
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => void handleSaveSite()}
+                  disabled={siteBusy}
+                  className="flex-1 rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"
+                >
+                  {siteBusy ? "..." : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingSite(null)}
+                  className="rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setPlacingSite(true)}
+              disabled={!selectedReceiverId || placingSite}
+              className="w-full rounded-md border border-base-600 px-2 py-1 text-xs text-slate-300 hover:bg-base-800 disabled:opacity-50"
+            >
+              {placingSite ? "Click the map..." : "Set location"}
+            </button>
+          )}
+          {siteError && <p className="mt-1 text-[11px] text-red-400">{siteError}</p>}
         </div>
 
         <div className="border-t border-base-700 pt-3 text-[11px] text-slate-500">

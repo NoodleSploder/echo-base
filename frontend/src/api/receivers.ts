@@ -113,7 +113,16 @@ export interface ReceiverInventoryRecord {
   first_seen_at: string;
   last_seen_at: string;
   attached: boolean;
+  site_name: string | null;
+  latitude: number | null;
+  longitude: number | null;
 }
 
 export const getReceiverInventory = () =>
   api.get<ReceiverInventoryRecord[]>("/api/receivers/inventory");
+
+export const setReceiverLocation = (id: string, latitude: number, longitude: number, siteName: string | null) =>
+  api.put<{ receiver_id: string; site_name: string | null; latitude: number; longitude: number }>(
+    `/api/receivers/${encodeURIComponent(id)}/location`,
+    { latitude, longitude, site_name: siteName },
+  );

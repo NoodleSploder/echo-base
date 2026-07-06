@@ -199,13 +199,15 @@ Built today:
 - Aurora forecast (NOAA SWPC, free/keyless) + a Kp-index readout,
   rendered server-side to keep a 65,160-point global grid off the
   browser's plate
+- Receiver sites -- operator-set physical location per receiver
+  (a plain RTL-SDR dongle has no GPS, so this is set from the map's
+  sidebar, not inferred)
 
 Layers the framework supports but don't have real position data behind
 them yet (see `ROADMAP.md`'s Phase 17 for specifics):
 
 - Aircraft (ADS-B)
 - Marine traffic (AIS)
-- Receiver locations
 - Propagation / RF coverage
 - Signal reports (heat maps)
 

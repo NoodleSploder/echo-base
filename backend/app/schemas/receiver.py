@@ -54,3 +54,9 @@ class SignalDetectionRequest(BaseModel):
 class ScanRequest(BaseModel):
     frequencies: list[int]
     dwell_seconds: float = 2.0
+
+
+class ReceiverLocationRequest(BaseModel):
+    latitude: float
+    longitude: float
+    site_name: str | None = None

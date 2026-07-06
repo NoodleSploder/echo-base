@@ -815,19 +815,23 @@ rather than erroring the whole endpoint out.
 
 ## What's built vs. what the framework merely supports
 
-Three real layers exist today: **APRS Stations** (backed by data this
+Four real layers exist today: **APRS Stations** (backed by data this
 project already decodes and persists), **Satellite Ground Track**
 (backed by TLE data this project already fetches/predicts passes
-from), and **Aurora Forecast** (backed by NOAA SWPC, rendered
-server-side to a PNG). Every other layer described in `ROADMAP.md`'s
-Geospatial Intelligence phase -- AIS ships, ADS-B aircraft, receiver
-sites, RF coverage/heat maps, storm polygons -- is a real gap in
+from), **Aurora Forecast** (backed by NOAA SWPC, rendered
+server-side to a PNG), and **Receiver Sites** (backed by an
+operator-set location on `receiver_inventory` -- deliberately never
+inferred, since a plain RTL-SDR dongle has no GPS; set via
+`PUT /api/receivers/{id}/location`, requiring the receiver to have
+been seen at least once). Every other layer described in
+`ROADMAP.md`'s Geospatial Intelligence phase -- AIS ships, ADS-B
+aircraft, RF coverage/heat maps, storm polygons -- is a real gap in
 *data*, not in the layer framework: AIS/ADS-B position decoding was
-deliberately deferred when those decoders were built (see the diary),
-and receivers have no stored site location yet. The framework itself
-places no constraint on adding any of them; each is exactly the same
-shape of work as APRS Stations/Aurora Forecast were (a backend data
-source + a `MapLayer` subclass + one import line).
+deliberately deferred when those decoders were built (see the diary).
+The framework itself places no constraint on adding any of them; each
+is exactly the same shape of work as APRS Stations/Aurora Forecast/
+Receiver Sites were (a backend data source + a `MapLayer` subclass +
+one import line).
 
 ## Future extensibility
 

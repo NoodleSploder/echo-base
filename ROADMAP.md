@@ -748,13 +748,33 @@ Remaining (blocked on position decoding, not the layer framework)
 - Same shape of gap as ADS-B: the AIS decoder currently extracts
   message type + MMSI only, not position (see the AIS diary entry).
 
+## Receiver Sites
+
+Completed
+
+- Operator-set physical location (`site_name`/`latitude`/`longitude`)
+  on `receiver_inventory`, set via `PUT /api/receivers/{id}/location`
+  (requires the receiver to have been seen at least once; deliberately
+  never inferred -- a plain RTL-SDR dongle has no GPS). `ReceiverSitesLayer`
+  on `/map` shows every receiver with a location set, color-coded by
+  whether it's currently attached, with a "click the map to place it"
+  workflow in the sidebar. Verified live against the real attached
+  `rtl_sdr:00000001` (Nooelec NESDR SMArt v5).
+
+Remaining
+
+- Bulk site management (currently one receiver at a time via the map
+  sidebar)
+- Multiple receivers sharing one physical site (currently one location
+  per receiver_id)
+
 ## RF Coverage
 
 Remaining (nothing built yet)
 
-- Coverage/propagation modeling per receiver site -- blocked on
-  receivers having a stored site location at all (they don't yet;
-  receiver inventory tracks "seen", not "located").
+- Coverage/propagation modeling per receiver site -- now unblocked
+  (receivers can have a stored site location, see "Receiver Sites"
+  above); still needs the actual propagation modeling.
 
 ## Heat Maps
 
