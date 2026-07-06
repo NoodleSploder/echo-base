@@ -25,6 +25,7 @@ from app.db import session as db_session
 from app.db.models.user import User, UserRole
 from app.plugins.manager import PluginManager
 from app.schemas.common import fail
+from app.services.aprs_stations import persist_aprs_station
 from app.services.receiver_service import ReceiverService
 from app.services.recording_service import RecordingService
 from app.services.signal_history import persist_signal_detected
@@ -91,6 +92,7 @@ async def lifespan(app: FastAPI):
     event_bus.bind_loop(asyncio.get_running_loop())
     connection_manager = ConnectionManager(event_bus)
     event_bus.subscribe("SignalDetected", persist_signal_detected)
+    event_bus.subscribe("AprsPacket", persist_aprs_station)
 
     disabled_ids = {plugin_id for plugin_id, enabled in settings.plugins.enabled.items() if not enabled}
     plugin_manager = PluginManager(

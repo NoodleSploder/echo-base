@@ -355,10 +355,16 @@ Completed
   actually use) is deliberately not implemented yet -- see
   `aprs_position.py`'s docstring and the diary for why. No map view
   exists yet, only a coordinates readout.
+- APRS station persistence (`aprs_stations` table: last known
+  position per callsign, survives restarts, queryable via
+  `GET /api/aprs/stations`) -- the data layer a map needs, plus a
+  compact "known stations" strip in the Messaging Center's APRS tab.
+  Still no actual map/tile rendering (see below).
 
 Remaining
 
-- APRS map (station markers/tile rendering; position parsing itself is partially done, see above)
+- APRS map (station markers/tile rendering on an actual map -- the
+  station data itself is now persisted and queryable, see above)
 - APRS Mic-E position format (needs real captured packets to verify against, not a from-memory table transcription)
 - ADS-B map
 - AIS map

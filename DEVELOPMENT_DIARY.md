@@ -3587,3 +3587,54 @@ An early draft used `event.source` directly, which would have toasted
 1. Accessibility and responsive-layout pass (Phase 1's last remaining
    frontend item) -- needs a browser to verify properly.
 2. Same environment blocks as ever.
+
+## Added: APRS station persistence (Phase 9 groundwork)
+
+The ROADMAP's Phase 9 "APRS map" item needs two things: a real map/tile
+UI (needs a browser to build against properly) and a data layer
+tracking "where's each station currently reporting from" (doesn't).
+Built the second half this slice, same "persist events via an
+EventBus subscriber" shape as `signal_history.py`.
+
+- `aprs_stations` table (migration 0005): one row per
+  `(receiver_id, callsign)`, upserted on every position-bearing
+  `AprsPacket` event -- last known position, not a full track/
+  breadcrumb history (that's a bigger addition, noted as a possible
+  follow-up). Packets without a decoded position (most real APRS
+  traffic isn't a position report, and Mic-E specifically isn't
+  decoded yet -- see the existing `aprs_position.py` docstring) are
+  correctly skipped rather than persisted with garbage coordinates.
+- `services/aprs_stations.py`: `persist_aprs_station` (the subscriber,
+  wired in `main.py` alongside `persist_signal_detected`) and
+  `query_aprs_stations(receiver_id=None, minutes=1440)`.
+- `GET /api/aprs/stations`: any authenticated role.
+- Frontend: `MessagingCenterWidget`'s APRS tab now shows a compact
+  "known stations" pill strip (callsign + lat/lon, hover for last
+  info/last-heard time) above the raw packet feed, polled every 10s --
+  deduplicated by station, distinct from the packet feed below it
+  which shows every packet in arrival order.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 100/100 passing (5 new:
+  persist-and-query round trip, second-report-updates-not-duplicates,
+  no-position-not-persisted, filter-by-receiver, and a REST-level
+  end-to-end test -- same shape as `test_signal_history.py`).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: confirmed `GET /api/aprs/stations` live against
+  the running backend (empty list, correctly -- no real APRS position
+  packet has been decoded in this environment yet, same known block as
+  every other real-decode-verification entry: no guaranteed APRS
+  traffic in range of whatever antenna is attached here). The
+  persistence logic itself is verified by the real DB-session-backed
+  test suite above, same confidence level as `signal_history.py` had
+  before its own first real detection.
+
+## Next Steps
+
+1. Actual map/tile rendering for APRS stations (needs a browser to
+   build against properly -- `ROADMAP.md`'s Known Environment Blocks).
+2. A real position *history* (not just last-known) if a track/
+   breadcrumb view is ever wanted.
+3. Same environment blocks as ever.
