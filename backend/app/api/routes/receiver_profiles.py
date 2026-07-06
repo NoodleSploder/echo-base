@@ -134,5 +134,10 @@ async def apply_profile(
         await stream_service.enable_aprs(receiver_id)
     elif profile.decoder == "same":
         await stream_service.enable_same(receiver_id)
+    # Same auto-enable-only-on reasoning as the decoder above, extended
+    # to signal detection now that a profile has a natural place to
+    # carry a margin_db (it didn't when decoder auto-enable first shipped).
+    if profile.margin_db is not None:
+        await stream_service.enable_signal_detection(receiver_id, profile.margin_db, profile.frequency_hz)
     status = await service.status(receiver_id)
     return _status_response(status, receiver_id, stream_service)

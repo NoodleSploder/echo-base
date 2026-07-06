@@ -60,6 +60,7 @@ export interface ReceiverProfile {
   bandwidth_hz: number | null;
   gain: string | null;
   decoder: string | null;
+  margin_db: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -71,6 +72,7 @@ export interface ReceiverProfileInput {
   bandwidth_hz?: number | null;
   gain?: string | null;
   decoder?: string | null;
+  margin_db?: number | null;
 }
 
 export interface EchoBaseEvent {

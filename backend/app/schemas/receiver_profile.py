@@ -12,6 +12,7 @@ class ReceiverProfileCreate(BaseModel):
     bandwidth_hz: int | None = Field(default=None, gt=0)
     gain: str | None = None
     decoder: str | None = None
+    margin_db: float | None = None
 
 
 class ReceiverProfileUpdate(ReceiverProfileCreate):
@@ -26,6 +27,7 @@ class ReceiverProfileSchema(BaseModel):
     bandwidth_hz: int | None
     gain: str | None
     decoder: str | None
+    margin_db: float | None
     created_at: datetime
     updated_at: datetime
 

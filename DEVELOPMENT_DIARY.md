@@ -3824,3 +3824,56 @@ shape as gain/bandwidth/sample-rate before it.
 
 1. Same environment blocks as ever -- nothing else concrete queued
    right now; next slice will need a fresh look at `ROADMAP.md`.
+
+## Added: profile-carried margin_db auto-enables signal detection
+
+Closes the specific follow-up flagged in the profile-decoder-auto-enable
+entry above: "extend the same auto-enable pattern to signal detection
+once profiles have a natural place to carry a margin_db." Added that
+field and wired it through, same "only ever turns it on, never off"
+reasoning as the APRS/SAME decoder auto-enable.
+
+- `receiver_profiles.margin_db` (new nullable column, migration 0006).
+- `apply_profile`: if the applied profile has `margin_db` set, also
+  calls `stream_service.enable_signal_detection(receiver_id,
+  margin_db, profile.frequency_hz)`.
+- Frontend: `ReceiverProfilesPanel`'s create form gets an optional
+  "Detect margin (dB)" field; saved profiles show "detect @ NdB" when
+  set.
+
+**Real gap hit and fixed along the way**: this app's zero-config
+`db_session.create_all()` only creates *missing tables* on startup --
+it never alters an existing table, so adding a column to
+`receiver_profiles` (an existing table, unlike every previous
+migration which added a brand-new table) silently did nothing against
+this environment's actual long-lived dev database. First real REST
+call after restart failed with `OperationalError: table
+receiver_profiles has no column named margin_db`. Fixed by actually
+running Alembic against the live DB: `alembic stamp 0005` (the
+existing tables already matched migrations 0003-0005, just recorded
+under `alembic_version` as still at `0002` since they'd been created
+via `create_all` rather than `alembic upgrade` in the first place),
+then `alembic upgrade head` to add the column for real. Worth keeping
+in mind for any *future* column-on-existing-table change in this
+environment -- `create_all()` won't catch it, an explicit
+stamp+upgrade will be needed again.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 111/111 passing (1 new:
+  create a profile with `margin_db`, apply it, confirm
+  `capture-health` reports `signal_detection_enabled: true`).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware**: created a real profile with `margin_db: 10.0`,
+  applied it to the actual RTL2838, confirmed `capture-health` flipped
+  `signal_detection_enabled` from unset to `true` with no separate
+  start call. Cleaned up (stopped detection, deleted the profile).
+
+## Next Steps
+
+1. Same pattern could extend to occupancy tracking too, if a concrete
+   need for it comes up.
+2. Keep the create_all()-doesn't-alter-existing-tables gap in mind for
+   the next schema change to an existing table.
+3. Same environment blocks as ever.

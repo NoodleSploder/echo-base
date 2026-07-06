@@ -25,6 +25,7 @@ export function ReceiverProfilesPanel({
   const [name, setName] = useState("");
   const [frequencyMhz, setFrequencyMhz] = useState("");
   const [gain, setGain] = useState("");
+  const [marginDb, setMarginDb] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -69,11 +70,18 @@ export function ReceiverProfilesPanel({
     event.preventDefault();
     const hz = Math.round(Number(frequencyMhz) * 1e6);
     if (!name.trim() || !Number.isFinite(hz) || hz <= 0) return;
+    const parsedMargin = marginDb.trim() ? Number(marginDb) : null;
     try {
-      await createReceiverProfile({ name: name.trim(), frequency_hz: hz, gain: gain.trim() || null });
+      await createReceiverProfile({
+        name: name.trim(),
+        frequency_hz: hz,
+        gain: gain.trim() || null,
+        margin_db: parsedMargin !== null && Number.isFinite(parsedMargin) ? parsedMargin : null,
+      });
       setName("");
       setFrequencyMhz("");
       setGain("");
+      setMarginDb("");
       setError(null);
       await refresh();
     } catch {
@@ -121,9 +129,17 @@ export function ReceiverProfilesPanel({
             >
               <div>
                 <div className="font-medium text-slate-200">{profile.name}</div>
-                <div className="text-xs text-slate-500">
+                <div
+                  className="text-xs text-slate-500"
+                  title={
+                    profile.margin_db != null
+                      ? "Applying this profile auto-enables signal detection at this margin"
+                      : undefined
+                  }
+                >
                   {(profile.frequency_hz / 1e6).toFixed(4)} MHz
                   {profile.gain ? ` · gain ${profile.gain}` : ""}
+                  {profile.margin_db != null ? ` · detect @ ${profile.margin_db}dB` : ""}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -219,6 +235,19 @@ export function ReceiverProfilesPanel({
               onChange={(event) => setGain(event.target.value)}
               placeholder="auto"
               className="w-20 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-slate-500" title="Auto-enables signal detection at this margin when applied">
+              Detect margin (dB)
+            </label>
+            <input
+              type="number"
+              step="1"
+              value={marginDb}
+              onChange={(event) => setMarginDb(event.target.value)}
+              placeholder="optional"
+              className="w-24 rounded-md border border-base-600 bg-base-800 px-2 py-1 text-slate-100 placeholder:text-slate-500"
             />
           </div>
           <button
