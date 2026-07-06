@@ -38,3 +38,44 @@ def test_malformed_position_returns_none():
 
 def test_empty_info_returns_none():
     assert parse_aprs_position(b"") is None
+
+
+def _encode_base91(value: int) -> str:
+    chars = []
+    for _ in range(4):
+        chars.append(chr(33 + value % 91))
+        value //= 91
+    return "".join(reversed(chars))
+
+
+def _build_compressed_info(latitude: float, longitude: float, symbol_code: str = ">") -> bytes:
+    lat_value = round((90 - latitude) * 380926)
+    lon_value = round((longitude + 180) * 190463)
+    info = f"!/{_encode_base91(lat_value)}{_encode_base91(lon_value)}{symbol_code}!"
+    return info.encode("ascii")
+
+
+def test_compressed_position_round_trips():
+    info = _build_compressed_info(49.05833, -72.02917, symbol_code=">")
+    position = parse_aprs_position(info)
+    assert position is not None
+    assert position.latitude == pytest.approx(49.05833, abs=1e-3)
+    assert position.longitude == pytest.approx(-72.02917, abs=1e-3)
+    assert position.symbol_table == "/"
+    assert position.symbol_code == ">"
+
+
+def test_compressed_position_southern_hemisphere():
+    info = _build_compressed_info(-33.85, 151.21)
+    position = parse_aprs_position(info)
+    assert position is not None
+    assert position.latitude == pytest.approx(-33.85, abs=1e-3)
+    assert position.longitude == pytest.approx(151.21, abs=1e-3)
+
+
+def test_compressed_position_with_timestamp():
+    body = _build_compressed_info(49.05833, -72.02917).decode("ascii")[1:]  # drop leading '!'
+    info = ("/092345z" + body).encode("ascii")
+    position = parse_aprs_position(info)
+    assert position is not None
+    assert position.latitude == pytest.approx(49.05833, abs=1e-3)

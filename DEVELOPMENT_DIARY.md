@@ -2837,3 +2837,111 @@ honestly, seemed better than either skipping it or overclaiming it.
 3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
    hardware is available, or get real browser/audio verification once
    available.
+
+---
+
+# 2026-07-06 — APRS Compressed Position Format
+
+## Summary
+
+Added the second APRS position format: "compressed" (base-91 encoded)
+position reports, alongside the uncompressed parser from the previous
+entry. Deliberately skipped Mic-E again -- same reasoning as last
+time, expanded on below -- in favor of a format that's a closed-form
+formula rather than a lookup table, and therefore something a
+round-trip test can actually prove correct rather than just
+self-consistent.
+
+## Motivation
+
+The previous entry's "Next Steps" named Mic-E as the natural
+continuation, since it's the more common format on real hardware
+trackers. Attempting it anyway surfaced the real reason to hold off:
+Mic-E's position data is packed into the *destination callsign field*
+via a per-character substitution table (which of ~4 character classes
+each of the 6 destination characters falls into determines a digit
+*and* a message-type bit *and*, for the last three characters,
+N/S/longitude-offset/E-W flags). Transcribing that table from memory
+with no real Mic-E packet available in this environment to check
+against is exactly the kind of change that could look plausible,
+pass a self-written round-trip test (which would only prove the
+encoder and decoder agree with *each other*, not with the real
+spec), and quietly produce wrong coordinates. The compressed format
+doesn't have this problem: it's `symbol_table + base91(lat) +
+base91(lon) + symbol + ...`, a specific documented arithmetic formula,
+and decoding it is provably the inverse of encoding it -- a round-trip
+test genuinely exercises spec compliance, not just internal
+consistency.
+
+## Features Added
+
+- `parse_aprs_position` (`aprs_position.py`) now recognizes both
+  position formats from the same entry point: after the data type
+  character (and timestamp, if present), the next character
+  disambiguates them -- a digit means uncompressed (latitude always
+  starts with degrees), `/` or `\` means compressed (a symbol table
+  ID, never a digit). `_parse_compressed`/`_base91_decode` implement
+  the base-91 decode: `latitude = 90 - value/380926`,
+  `longitude = -180 + value/190463`, per APRS101.pdf ch. 9.
+
+## Architecture Decisions
+
+- **Still no Mic-E, and the reasoning is written down explicitly in
+  the module docstring, not just this diary entry.** The point of
+  writing it out in the code itself is so the *next* time someone
+  (or a future me) looks at "why doesn't this decode Mic-E packets,"
+  the answer -- and the bar for doing it properly (real captured
+  packets to check against, not just a from-memory table) -- is right
+  there, not buried in diary history.
+- **Format disambiguation by first-character type (digit vs. `/`/`\`),
+  not a length check or trying both parsers.** This is the standard
+  approach real APRS libraries use and is unambiguous for the vast
+  majority of real traffic; a table-driven disambiguation would add
+  complexity for cases that don't occur in valid data (both formats
+  are position-report-specific and don't overlap in their first byte's
+  category).
+
+## Files Created / Modified
+
+- `backend/app/services/decoders/aprs_position.py` -- compressed
+  format support, explicit no-Mic-E rationale in the docstring.
+- `backend/tests/test_aprs_position.py` -- compressed-format round
+  trip (encode via the inverse formula, decode, assert recovery),
+  southern-hemisphere and timestamped variants.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 66/66 passing (63
+  previous + 3 new compressed-format tests, including a genuine
+  round-trip: encoding a known lat/lon into base-91 via the inverse of
+  the exact formula the decoder uses, then decoding it back and
+  asserting recovery to within ~0.001 degrees, i.e. within one
+  base-91 encoding step's resolution).
+- Frontend: unaffected (no frontend files touched this entry).
+- **Real hardware**: restarted the live backend, tuned to 144.390 MHz,
+  enabled APRS decoding (now checking both position formats on every
+  decoded packet), listened 20 seconds. Zero packets, as in every
+  previous live attempt -- expected, not a regression. No exceptions,
+  clean `rtl_sdr` process start/stop.
+
+## Outstanding Work
+
+- Mic-E remains unimplemented, deliberately, pending either real
+  captured Mic-E traffic to verify against or a very carefully
+  cross-checked transcription of the destination-address table.
+- No map view still -- coordinates are text, not plotted, for both
+  position formats now.
+- Same real-traffic-unverified, Radio-Manager-blocked-on-hardware, and
+  browser-verification-blocked-on-display gaps as recent entries,
+  tracked in `ROADMAP.md`.
+
+## Next Steps
+
+1. If Mic-E is worth doing, get real captured Mic-E packets first
+   (e.g. from a public APRS-IS feed or a real local tracker) to
+   validate against, rather than transcribing the table blind again.
+2. Add an actual map view once a browser is available to verify
+   rendering.
+3. Start Phase 3 (Radio Manager / Hamlib) once real serial/CAT
+   hardware is available, or get real browser/audio verification once
+   available.

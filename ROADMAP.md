@@ -334,15 +334,17 @@ Remaining
 
 Completed
 
-- APRS position parsing (uncompressed format only -- lat/lon/symbol
-  extracted from decoded APRS packets and surfaced in the dashboard).
-  Compressed and Mic-E position formats are not yet decoded; no map
-  view exists yet, only a coordinates readout.
+- APRS position parsing: uncompressed and compressed (base-91) formats
+  -- lat/lon/symbol extracted from decoded APRS packets and surfaced
+  in the dashboard. Mic-E (the format most real hardware trackers
+  actually use) is deliberately not implemented yet -- see
+  `aprs_position.py`'s docstring and the diary for why. No map view
+  exists yet, only a coordinates readout.
 
 Remaining
 
-- APRS map (station markers/tile rendering; position parsing itself is done, see above)
-- APRS Mic-E and compressed position formats
+- APRS map (station markers/tile rendering; position parsing itself is partially done, see above)
+- APRS Mic-E position format (needs real captured packets to verify against, not a from-memory table transcription)
 - ADS-B map
 - AIS map
 - Receiver map
