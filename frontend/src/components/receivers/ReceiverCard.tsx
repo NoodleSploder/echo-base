@@ -14,7 +14,6 @@ import {
   stopScan,
   stopSignalDetection,
   tuneReceiver,
-  type CaptureHealth,
 } from "../../api/receivers";
 import {
   cancelScheduledRecording,
@@ -30,14 +29,14 @@ import { useAudioPlayer } from "../../hooks/useAudioPlayer";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
 import { StatusBadge } from "../common/StatusBadge";
-import { ReceiverDecoders } from "./ReceiverDecoders";
 
-// Matches backend/app/services/dsp.py's DEMODULATORS -- USB/LSB (SSB)
-// demod isn't implemented in software yet, so only FM/AM are offered.
-const AUDIO_MODES = ["fm", "am"];
+// Matches backend/app/services/dsp.py's DEMODULATORS -- LSB isn't
+// implemented (only the upper sideband, added for FT8), so "usb" is
+// offered but not "lsb".
+const AUDIO_MODES = ["fm", "am", "usb"];
 // Recording additionally offers "iq" (raw samples, not demodulated) --
 // not a Listen option since there's nothing to play back live for it.
-const RECORDING_MODES = ["fm", "am", "iq"];
+const RECORDING_MODES = ["fm", "am", "usb", "iq"];
 
 export function ReceiverCard({
   receiver,
@@ -54,7 +53,6 @@ export function ReceiverCard({
   const [listening, setListening] = useState(false);
   const [mode, setMode] = useState("fm");
   const [squelch, setSquelch] = useState(0);
-  const [captureHealth, setCaptureHealth] = useState<CaptureHealth | null>(null);
   const [scanFrequencies, setScanFrequencies] = useState("");
   const [scanDwellSeconds, setScanDwellSeconds] = useState(2);
   const [scanBusy, setScanBusy] = useState(false);
@@ -280,7 +278,6 @@ export function ReceiverCard({
       try {
         const health = await getCaptureHealth(receiver.id);
         if (cancelled) return;
-        setCaptureHealth(health);
         if (typeof health.triggered_recording_armed === "boolean") {
           setTriggeredRecordingArmed(health.triggered_recording_armed);
         }
@@ -551,14 +548,6 @@ export function ReceiverCard({
               />
             </label>
           </div>
-        )}
-
-        {supportsAudio && (
-          <ReceiverDecoders
-            receiverId={receiver.id}
-            frequencyHz={status?.frequency_hz ?? null}
-            captureHealth={captureHealth}
-          />
         )}
 
         {supportsAudio && (

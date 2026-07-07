@@ -11,5 +11,10 @@ export interface AprsStation {
   last_heard_at: string;
 }
 
-export const listAprsStations = (minutes?: number) =>
-  api.get<AprsStation[]>(`/api/aprs/stations${minutes ? `?minutes=${minutes}` : ""}`);
+export const listAprsStations = (receiverId?: string, minutes?: number) => {
+  const params = new URLSearchParams();
+  if (receiverId) params.set("receiver_id", receiverId);
+  if (minutes) params.set("minutes", String(minutes));
+  const query = params.toString();
+  return api.get<AprsStation[]>(`/api/aprs/stations${query ? `?${query}` : ""}`);
+};

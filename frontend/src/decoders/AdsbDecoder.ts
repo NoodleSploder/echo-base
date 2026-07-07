@@ -1,4 +1,5 @@
 import { startAdsBDecoding, stopAdsBDecoding } from "../api/receivers";
+import { AdsbAircraftPanel } from "../components/receivers/AdsbAircraftPanel";
 import { registerDecoder } from "./DecoderRegistry";
 
 registerDecoder({
@@ -11,4 +12,5 @@ registerDecoder({
   start: startAdsBDecoding,
   stop: stopAdsBDecoding,
   feedsMapLayer: "adsb-aircraft",
+  Panel: AdsbAircraftPanel,
 });

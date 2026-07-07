@@ -863,17 +863,27 @@ toggle/lifecycle model around them.
 
 ---
 
-# Receiver Decoder Registry (frontend)
+# Decoder Registry (frontend) -- decoders are pointed at receivers, not owned by them
 
-`ReceiverCard.tsx` grew a hardcoded button (and, for SSTV, an inline
-image panel) for every protocol decoder as they were added -- APRS,
-SAME, ADS-B, AIS, SSTV, FT8 -- until the card became a wall of buttons
-most of which are irrelevant to whatever the receiver is actually
-tuned to at any given moment. `frontend/src/decoders/` fixes this with
-the exact same self-registration pattern the Geospatial map's
-`MapLayer`/`LayerRegistry` already established: a `DecoderDefinition`
-interface, a `DecoderRegistry`, and one file per decoder that
-registers itself as a side effect of being imported.
+`ReceiverCard.tsx` originally grew a hardcoded button (and, for SSTV,
+an inline image panel) for every protocol decoder as they were added --
+APRS, SAME, ADS-B, AIS, SSTV, FT8 -- until the card became a wall of
+buttons most of which were irrelevant to whatever the receiver
+happened to be tuned to. A first pass fixed the clutter with a
+self-registering `DecoderRegistry` (mirroring the Geospatial map's
+`MapLayer`/`LayerRegistry`) but kept the same *ownership direction*:
+the receiver still hosted the decoder.
+
+That direction was backwards, and was corrected on direct feedback:
+**a decoder is an independent, addressable unit that gets pointed at
+whichever receiver you choose** -- the same relationship SDRAngel's
+device/channel model has (a "channel" plugin like an NFM demodulator
+is configured independently and assigned to a device, not baked into
+the device's own UI). `ReceiverCard` went back to being only about the
+receiver itself (tune/gain/scan/recording/start-stop); decoders moved
+to their own page (`/digital-modes`, `DigitalModesPage.tsx`), each
+rendered as an independent `DecoderPanel` that owns a receiver
+*selection*, not the other way around.
 
 ## The `DecoderDefinition` interface
 
@@ -887,59 +897,77 @@ interface DecoderDefinition {
   start: (receiverId: string) => Promise<unknown>;
   stop: (receiverId: string) => Promise<unknown>;
   feedsMapLayer?: string;      // the geo/layers MapLayer id it populates, if any
-  Panel?: ComponentType<{ receiverId: string }>; // optional live inline panel
+  Panel?: ComponentType<{ receiverId: string }>; // the decoder's live data view
 }
 ```
 
-`ReceiverDecoders.tsx` (rendered once per receiver card) queries the
-registry, renders one toggle per decoder, and mounts a decoder's
-`Panel` only while it's enabled -- SSTV's progressively-decoding image
-(`decoders/SstvPanel.tsx`) manages its own polling lifecycle entirely
-within that panel now, rather than living inline in `ReceiverCard`
-gated by a boolean.
+Unchanged from the first pass -- the registry itself
+(`decoders/DecoderRegistry.ts`) and the self-registration convention
+(one file per decoder in `frontend/src/decoders/`, imported for its
+side effect in `decoders/index.ts`) were sound; only the *consumer* of
+the registry moved.
+
+## `DecoderPanel` -- a decoder's own receiver selector, not the receiver's own decoder list
+
+`decoders/DecoderPanel.tsx` is rendered once per registered decoder on
+`DigitalModesPage`. Each instance:
+
+- Has its own receiver-select dropdown (populated from `GET
+  /api/receivers`), independent of every other decoder panel.
+- Remembers its receiver assignment per decoder id in `localStorage`,
+  so reloading the page reconnects each panel to whatever it was last
+  pointed at -- "switching between panels, each listening within its
+  own config" is the intended normal usage, not a special case.
+- Polls `GET .../capture-health` and `GET /api/receivers/{id}` for
+  *its selected receiver only* (not a shared poll -- each panel is
+  independently addressable, so there's no single "the" receiver to
+  share state from) to derive its own enabled state and the
+  receiver's current tuning.
+- Renders the decoder's `Panel` (its live data view -- a station/
+  aircraft/vessel table, or SSTV's progressively-decoding image) below
+  its own controls, passing down whichever receiver it's currently
+  pointed at.
 
 ## Frequency-band awareness -- a real "relates to" link, not just a filter
 
 Each decoder declares the frequency range(s) it's meant for (e.g. ADS-B
 near 1090MHz, FT8 across its ~11 standard HF dial frequencies, SSTV
-across several VHF/HF calling frequencies). `ReceiverDecoders` compares
-these against the receiver's current tuning and visually de-emphasizes
-(not hides -- an already-running decoder should never disappear from
-view just because the receiver got retuned) any decoder outside its
-band. This was a deliberate choice over hiding entirely: a `title`
-tooltip on an out-of-band toggle explains why it looks that way rather
-than just being invisible.
+across several VHF/HF calling frequencies). `DecoderPanel` compares
+these against its selected receiver's current tuning and visually
+de-emphasizes (not hides -- an already-running decoder should never
+look like it vanished just because the receiver got retuned) its own
+Start/Stop control when out of band, with a tooltip explaining why.
 
 `feedsMapLayer` is the other half of "components that relate and
 chain": a decoder can name the `geo/layers` `MapLayer` id its real data
-populates (e.g. FT8's decoder names `"ft8-stations"`), so the UI can
-tell the user "enabling this also lights up the map" instead of the
-decoder toggle and the map layer being two silently unrelated pieces
-of UI that happen to share data.
+populates (e.g. FT8's decoder names `"ft8-stations"`), so the panel can
+tell the user "this also lights up the map" instead of the decoder and
+the map layer being two silently unrelated pieces of UI that happen to
+share a backend.
 
-## State, shared from one poll
+## Existing per-receiver/per-protocol components stayed dual-use
 
-`ReceiverCard` already polls `GET .../capture-health` once per
-receiver for its own concerns (capture-stalled detection, triggered-
-recording state); `ReceiverDecoders` receives that same poll result as
-a prop and derives each decoder's enabled state from
-`captureHealth[decoder.healthKey]`, rather than each decoder polling
-the same endpoint separately. A decoder enabled from elsewhere (e.g. a
-suggested receiver profile that enables it server-side directly) shows
-up correctly here too, for the same reason the original inline
-version did.
+`AdsbAircraftPanel`/`AisVesselsPanel` (originally global, receiver-
+agnostic summaries on the Receivers page) gained an optional
+`receiverId` prop rather than being duplicated: given one, they filter
+to that receiver and skip their own `Card` chrome (the wrapping
+`DecoderPanel` already supplies it); omitted, they behave exactly as
+before. `Ft8StationsPanel`/`AprsStationsPanel` are new, built directly
+against the `DecoderPanelProps` shape since no prior global widget for
+them existed.
 
 ## Future extensibility
 
 Adding a new decoder requires, at most:
 
 1. The backend route/toggle if it doesn't already exist.
-2. A `DecoderDefinition` file in `frontend/src/decoders/`.
+2. A `DecoderDefinition` file in `frontend/src/decoders/` (with a
+   `Panel` component for its live data view, if it has one).
 3. One import line in `decoders/index.ts`.
 
-No changes to `ReceiverCard`, `ReceiverDecoders`, or any other
-decoder -- the same shape of extensibility guarantee `MapLayer` gives
-the Geospatial platform.
+No changes to `DigitalModesPage`, `DecoderPanel`, `ReceiverCard`, or
+any other decoder -- the same shape of extensibility guarantee
+`MapLayer` gives the Geospatial platform.
 
 ---
 

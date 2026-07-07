@@ -11,5 +11,10 @@ export interface AisVessel {
   longitude: number | null;
 }
 
-export const listAisVessels = (minutes?: number) =>
-  api.get<AisVessel[]>(`/api/ais/vessels${minutes ? `?minutes=${minutes}` : ""}`);
+export const listAisVessels = (receiverId?: string, minutes?: number) => {
+  const params = new URLSearchParams();
+  if (receiverId) params.set("receiver_id", receiverId);
+  if (minutes) params.set("minutes", String(minutes));
+  const query = params.toString();
+  return api.get<AisVessel[]>(`/api/ais/vessels${query ? `?${query}` : ""}`);
+};

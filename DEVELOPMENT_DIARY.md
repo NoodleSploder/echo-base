@@ -5513,3 +5513,98 @@ changes -- this is purely a frontend architecture/UX refactor.
 2. The same registry pattern could extend to the generic tools
    (signal detection, occupancy, scan) if they ever need frequency-
    band awareness too, though they're not protocol-specific today.
+
+## Corrected: decoders point at receivers, not the other way around
+
+Direct, clear feedback on the previous entry's refactor: "you are on a
+track to build everything into the receiver definition rather than
+making each thing a component... instead of building everything on the
+receiver definition, take the FT8 panel... and allow it to be pointed
+at the receiver." Right -- the `DecoderRegistry` refactor fixed the
+*clutter* (six hardcoded buttons became a clean registry) but kept the
+same *ownership direction*: the receiver still hosted the decoder. The
+actual ask (prompted by looking at SDRAngel's device/channel model,
+where a demodulator "channel" is configured independently and assigned
+to a device rather than baked into the device's own UI) was to invert
+that relationship entirely.
+
+**What changed**: decoders are no longer rendered on `ReceiverCard` at
+all. Each one is now an independent panel on a new `/digital-modes`
+page (`DigitalModesPage.tsx`), and each panel owns *its own* receiver
+selection -- a dropdown, remembered per decoder in `localStorage` --
+rather than the receiver owning a fixed set of decoder toggles.
+Concretely: you can have an FT8 panel pointed at one receiver and an
+ADS-B panel pointed at a different one (or the same one), configure
+each independently, and switch between watching either panel's live
+data -- exactly "point a decoder at the receiver," not "attach a
+decoder to the receiver."
+
+**What didn't need to change**: the `DecoderDefinition`/
+`DecoderRegistry` abstraction itself (frequency bands, `healthKey`,
+`start`/`stop`, `feedsMapLayer`, an optional `Panel`) was sound --
+only its consumer moved, from `ReceiverCard` to the new `DecoderPanel`
+wrapper. This is exactly why that abstraction was worth building
+properly the first time even though the first integration point turned
+out wrong: the interface didn't need touching, just where it plugged
+in.
+
+**A real, honest side quest along the way**: while researching how far
+"a web UI version of SDRAngel" would actually reach, pulled SDRAngel's
+real current plugin list (37+ Rx channel plugins, TX support, 8+
+hardware backends) rather than relying on stale training-data memory
+of it. Confirmed this is a multi-month-scale vision, not a single
+task -- Echo Base already covers a real, meaningful subset (spectrum,
+NFM/AM/USB demod, ADS-B/AIS with real position decode, APRS, SAME,
+FT8, SSTV), and several SDRAngel capabilities are flatly blocked in
+this environment specifically (TX needs TX-capable hardware; DSD/DMR
+needs an AMBE vocoder, the same wall hit earlier). Didn't attempt a
+full gap-analysis roadmap document since the user's actual ask turned
+out to be the much more concrete "invert the decoder/receiver
+relationship" request, not "build all of SDRAngel."
+
+**Other real fixes bundled in**: `AdsbAircraftPanel`/`AisVesselsPanel`
+(previously global, receiver-agnostic summaries on the Receivers page)
+gained an optional `receiverId` prop rather than being duplicated --
+filtered and chrome-free when given one (for use inside a
+`DecoderPanel`), unchanged otherwise. Two dashboard widgets
+(`DigitalModeRadioWidget`, `DigitalDecodesWidget`) that had been
+showing hardcoded fake sample data since the very first UI scaffold
+were deleted, superseded by the real per-decoder panels. Also noticed
+and fixed a stale comment claiming "USB/LSB demod isn't implemented in
+software yet" -- it was, as of the FT8 work -- and added "usb" to the
+Listen/Record mode options accordingly.
+
+**Files added**: `frontend/src/decoders/DecoderPanel.tsx`,
+`Ft8StationsPanel.tsx`, `AprsStationsPanel.tsx`,
+`frontend/src/pages/DigitalModesPage.tsx`. Deleted:
+`frontend/src/components/receivers/ReceiverDecoders.tsx` (superseded),
+`DigitalModeRadioWidget.tsx`, `DigitalDecodesWidget.tsx` (stale mock
+data). Extended: `api/ft8.ts`/`ais.ts`/`adsb.ts`/`aprs.ts` (receiverId
+filter param), `AdsbAircraftPanel.tsx`/`AisVesselsPanel.tsx`
+(receiverId prop), `App.tsx` (real route), `DashboardPage.tsx`
+(removed the two stale widgets), `ReceiverCard.tsx` (decoder section
+removed entirely), `lib/sampleData.ts` (removed now-unused mock
+exports).
+
+## Verification
+
+- Frontend: `tsc -b` clean, `vite build` clean, `eslint` clean (3
+  pre-existing warnings only).
+- Backend: untouched this round; `pytest` still 231/231.
+- No browser available here to visually confirm the new Digital Modes
+  page's grid layout or per-panel receiver-selector UX -- verified via
+  successful build/lint and careful reading, same limitation noted
+  throughout this session's frontend work.
+
+## Next Steps
+
+1. Visual confirmation of the Digital Modes page once a browser is
+   available -- panel grid responsiveness, receiver-selector UX, the
+   out-of-band de-emphasis styling.
+2. If useful later: the same draggable/resizable grid `DashboardPage`
+   already uses (react-grid-layout) could replace `DigitalModesPage`'s
+   plain CSS grid, letting users rearrange/resize decoder panels the
+   same way dashboard widgets already work.
+3. SDRAngel gap analysis remains informal (not written to ROADMAP.md)
+   -- revisit if/when the actual next ask is "which SDRAngel feature
+   next" rather than an architecture correction.

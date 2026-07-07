@@ -1,4 +1,5 @@
 import { startAprsDecoding, stopAprsDecoding } from "../api/receivers";
+import { AprsStationsPanel } from "./AprsStationsPanel";
 import { registerDecoder } from "./DecoderRegistry";
 
 registerDecoder({
@@ -13,4 +14,5 @@ registerDecoder({
   start: startAprsDecoding,
   stop: stopAprsDecoding,
   feedsMapLayer: "aprs-stations",
+  Panel: AprsStationsPanel,
 });

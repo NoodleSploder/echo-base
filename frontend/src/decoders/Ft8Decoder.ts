@@ -1,5 +1,6 @@
 import { startFt8Decoding, stopFt8Decoding } from "../api/receivers";
 import { registerDecoder } from "./DecoderRegistry";
+import { Ft8StationsPanel } from "./Ft8StationsPanel";
 
 // Standard FT8 dial (USB suppressed-carrier) frequencies -- the actual
 // tones live in the ~0-3kHz passband above each of these, so each band
@@ -24,4 +25,5 @@ registerDecoder({
   start: startFt8Decoding,
   stop: stopFt8Decoding,
   feedsMapLayer: "ft8-stations",
+  Panel: Ft8StationsPanel,
 });

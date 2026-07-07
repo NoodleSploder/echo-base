@@ -13,5 +13,10 @@ export interface Ft8Station {
   last_heard_at: string;
 }
 
-export const listFt8Stations = (minutes?: number) =>
-  api.get<Ft8Station[]>(`/api/ft8/stations${minutes ? `?minutes=${minutes}` : ""}`);
+export const listFt8Stations = (receiverId?: string, minutes?: number) => {
+  const params = new URLSearchParams();
+  if (receiverId) params.set("receiver_id", receiverId);
+  if (minutes) params.set("minutes", String(minutes));
+  const query = params.toString();
+  return api.get<Ft8Station[]>(`/api/ft8/stations${query ? `?${query}` : ""}`);
+};

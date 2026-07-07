@@ -1,4 +1,5 @@
 import { startAisDecoding, stopAisDecoding } from "../api/receivers";
+import { AisVesselsPanel } from "../components/receivers/AisVesselsPanel";
 import { registerDecoder } from "./DecoderRegistry";
 
 registerDecoder({
@@ -10,6 +11,7 @@ registerDecoder({
   healthKey: "ais_enabled",
   start: startAisDecoding,
   stop: stopAisDecoding,
+  Panel: AisVesselsPanel,
   // No AIS map layer yet -- position decoding is real (see the AIS
   // diary entry) but mapping work for it is on hold for now.
 });

@@ -3,8 +3,6 @@ import { Responsive, WidthProvider, type Layout } from "react-grid-layout";
 import { getDashboardLayout, saveDashboardLayout } from "../api/dashboard";
 import { ActivityFeedWidget } from "../components/dashboard/ActivityFeedWidget";
 import { AlertsWidget } from "../components/dashboard/AlertsWidget";
-import { DigitalDecodesWidget } from "../components/dashboard/DigitalDecodesWidget";
-import { DigitalModeRadioWidget } from "../components/dashboard/DigitalModeRadioWidget";
 import { MessagingCenterWidget } from "../components/dashboard/MessagingCenterWidget";
 import { ReceiverTileGridWidget } from "../components/dashboard/ReceiverTileGridWidget";
 import { ReceiversPanelWidget } from "../components/dashboard/ReceiversPanelWidget";
@@ -27,14 +25,16 @@ const WIDGET_COMPONENTS: Record<string, ComponentType> = {
   systemStatus: SystemStatusWidget,
   receiverTiles: ReceiverTileGridWidget,
   alerts: AlertsWidget,
-  digitalMode: DigitalModeRadioWidget,
   messaging: MessagingCenterWidget,
-  digitalDecodes: DigitalDecodesWidget,
   recordings: RecordingsWidget,
   spectrumMonitor: SpectrumMonitorWidget,
   systemLog: SystemLogWidget,
 };
 
+// Per-protocol decoder panels (FT8, ADS-B, AIS, ...) live on the
+// dedicated Digital Modes page now, each independently pointed at
+// whichever receiver you choose -- see decoders/DecoderPanel.tsx --
+// rather than as fixed sample-data widgets here.
 const DEFAULT_LG_LAYOUT: Layout[] = [
   { i: "receivers", x: 0, y: 0, w: 3, h: 10, minW: 2, minH: 6 },
   { i: "spectrumOverview", x: 3, y: 0, w: 6, h: 10, minW: 4, minH: 6 },
@@ -42,12 +42,10 @@ const DEFAULT_LG_LAYOUT: Layout[] = [
   { i: "systemStatus", x: 0, y: 10, w: 3, h: 8, minW: 2, minH: 6 },
   { i: "receiverTiles", x: 3, y: 10, w: 9, h: 8, minW: 4, minH: 6 },
   { i: "alerts", x: 0, y: 18, w: 3, h: 8, minW: 2, minH: 5 },
-  { i: "digitalMode", x: 3, y: 18, w: 3, h: 8, minW: 2, minH: 6 },
-  { i: "messaging", x: 6, y: 18, w: 3, h: 8, minW: 2, minH: 6 },
-  { i: "digitalDecodes", x: 9, y: 18, w: 3, h: 8, minW: 2, minH: 6 },
-  { i: "recordings", x: 0, y: 26, w: 4, h: 8, minW: 3, minH: 5 },
-  { i: "spectrumMonitor", x: 4, y: 26, w: 4, h: 8, minW: 3, minH: 5 },
-  { i: "systemLog", x: 8, y: 26, w: 4, h: 8, minW: 3, minH: 5 },
+  { i: "messaging", x: 3, y: 18, w: 4, h: 8, minW: 2, minH: 6 },
+  { i: "recordings", x: 7, y: 18, w: 3, h: 8, minW: 3, minH: 5 },
+  { i: "spectrumMonitor", x: 0, y: 26, w: 5, h: 8, minW: 3, minH: 5 },
+  { i: "systemLog", x: 5, y: 26, w: 5, h: 8, minW: 3, minH: 5 },
 ];
 
 function stackedLayout(cols: number): Layout[] {

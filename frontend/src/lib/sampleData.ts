@@ -103,21 +103,6 @@ export const SAMPLE_ALERTS: SampleAlert[] = [
   { id: "a3", severity: "info", source: "R8", message: "New signal at 849.125 MHz", time: "10:38" },
 ];
 
-export const DIGITAL_MODE_TABS = ["M17", "DMR", "P25", "NXDN", "YSF", "D-STAR", "POCSAG"];
-
-export const SAMPLE_DMR_DECODE = {
-  talkgroup: "TG 3100 - K7ABC Talkgroup",
-  source: "R6 UHF PUBLIC SAFETY - 453.225 MHz",
-  callsign: "K7ABC",
-  time: "10:42:21",
-  duration: "00:00:28",
-  ber: "0.2%",
-  rssi: "-65 dBm",
-  snr: "18.7 dB",
-  callType: "Group Voice",
-  encryption: "Off",
-};
-
 export const MESSAGING_TABS = ["APRS", "WINLINK", "JS8CALL", "VARA HF", "FLDIGI"];
 
 export interface SampleAprsMessage {
@@ -134,24 +119,6 @@ export const SAMPLE_APRS_MESSAGES: SampleAprsMessage[] = [
   { from: "K7GPS-3", time: "10:41:32", freq: "144.390", text: "@123456h4450.12N/09312.45W-Test" },
   { from: "NOCALL-7", time: "10:41:10", freq: "144.390", text: "qAR NOCALL-7 Denver, CO" },
   { from: "K7ABC-10", time: "10:40:55", freq: "144.390", text: "qAR K7ABC-10 Boulder, CO" },
-];
-
-export interface SampleFt8Decode {
-  utc: string;
-  db: string;
-  dt: string;
-  callsign: string;
-  grid: string;
-  msg: string;
-}
-
-export const SAMPLE_FT8_DECODES: SampleFt8Decode[] = [
-  { utc: "10:42:21", db: "-12", dt: "0.1", callsign: "K7ABC", grid: "DN70", msg: "CQ CQ CQ" },
-  { utc: "10:42:15", db: "-15", dt: "-0.1", callsign: "W1AW", grid: "FN42", msg: "CQ W1AW FN42" },
-  { utc: "10:42:09", db: "-10", dt: "0.2", callsign: "VE7XYZ", grid: "CN89", msg: "R-07" },
-  { utc: "10:42:03", db: "-18", dt: "0.0", callsign: "KJ1T", grid: "FN42", msg: "RR73" },
-  { utc: "10:41:57", db: "-14", dt: "-0.1", callsign: "N3FJP", grid: "EN51", msg: "73" },
-  { utc: "10:41:51", db: "-16", dt: "0.1", callsign: "JA1ABC", grid: "PM95", msg: "CQ JA1ABC PM95" },
 ];
 
 export interface SampleRecording {

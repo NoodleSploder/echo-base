@@ -3,6 +3,7 @@ import { ProtectedRoute } from "./components/common/ProtectedRoute";
 import { AppShell } from "./components/layout/AppShell";
 import { ComingSoonPage } from "./pages/ComingSoonPage";
 import { DashboardPage } from "./pages/DashboardPage";
+import { DigitalModesPage } from "./pages/DigitalModesPage";
 import { GeospatialPage } from "./pages/GeospatialPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ReceiversPage } from "./pages/ReceiversPage";
@@ -23,7 +24,7 @@ export function App() {
         <Route index element={<DashboardPage />} />
         <Route path="receivers" element={<ReceiversPage />} />
         <Route path="spectrum" element={<ComingSoonPage title="Spectrum Intelligence" phase="Phase 4" />} />
-        <Route path="digital-modes" element={<ComingSoonPage title="Digital Modes" phase="Phase 5" />} />
+        <Route path="digital-modes" element={<DigitalModesPage />} />
         <Route path="messaging" element={<ComingSoonPage title="Messaging Center" phase="Phase 5" />} />
         <Route path="map" element={<GeospatialPage />} />
         <Route path="satellites" element={<SatellitesPage />} />

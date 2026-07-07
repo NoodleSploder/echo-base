@@ -11,5 +11,10 @@ export interface AdsbAircraft {
   longitude: number | null;
 }
 
-export const listAdsbAircraft = (minutes?: number) =>
-  api.get<AdsbAircraft[]>(`/api/adsb/aircraft${minutes ? `?minutes=${minutes}` : ""}`);
+export const listAdsbAircraft = (receiverId?: string, minutes?: number) => {
+  const params = new URLSearchParams();
+  if (receiverId) params.set("receiver_id", receiverId);
+  if (minutes) params.set("minutes", String(minutes));
+  const query = params.toString();
+  return api.get<AdsbAircraft[]>(`/api/adsb/aircraft${query ? `?${query}` : ""}`);
+};
