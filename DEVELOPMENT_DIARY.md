@@ -5608,3 +5608,29 @@ exports).
 3. SDRAngel gap analysis remains informal (not written to ROADMAP.md)
    -- revisit if/when the actual next ask is "which SDRAngel feature
    next" rather than an architecture correction.
+
+## Added: FT8 Messages widget back on the Dashboard
+
+Follow-up after moving decoder *configuration* off the Dashboard
+entirely: the user still wanted a live, read-only FT8 view there too.
+This is a different concern from `DecoderPanel` (which owns a receiver
+selection and start/stop) -- `Ft8MessagesWidget` is a plain summary,
+same shape as `ActivityFeedWidget`: show whatever's already been
+decoded, across every receiver, no configuration surface. Made
+`Ft8StationsPanel`'s `receiverId` prop optional (same dual-use pattern
+already established for `AdsbAircraftPanel`/`AisVesselsPanel`) so the
+widget can reuse it directly rather than duplicating the table markup.
+
+Registered in `DashboardPage`'s widget grid at the bottom (a new row) --
+a user with an already-saved layout (from before this widget existed)
+won't have a layout entry for it yet, so it may initially render at a
+default/awkward position until "Reset Layout" is used or it's dragged
+into place; not a bug, just how the existing dashboard grid system has
+always handled newly-added widgets.
+
+## Verification
+
+- Frontend: `tsc -b`, `vite build`, `eslint` all clean (3 pre-existing
+  warnings only).
+- Backend: untouched; 231/231 still passing.
+- No browser here to confirm the widget's actual grid placement.

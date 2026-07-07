@@ -3,6 +3,7 @@ import { Responsive, WidthProvider, type Layout } from "react-grid-layout";
 import { getDashboardLayout, saveDashboardLayout } from "../api/dashboard";
 import { ActivityFeedWidget } from "../components/dashboard/ActivityFeedWidget";
 import { AlertsWidget } from "../components/dashboard/AlertsWidget";
+import { Ft8MessagesWidget } from "../components/dashboard/Ft8MessagesWidget";
 import { MessagingCenterWidget } from "../components/dashboard/MessagingCenterWidget";
 import { ReceiverTileGridWidget } from "../components/dashboard/ReceiverTileGridWidget";
 import { ReceiversPanelWidget } from "../components/dashboard/ReceiversPanelWidget";
@@ -29,12 +30,16 @@ const WIDGET_COMPONENTS: Record<string, ComponentType> = {
   recordings: RecordingsWidget,
   spectrumMonitor: SpectrumMonitorWidget,
   systemLog: SystemLogWidget,
+  ft8Messages: Ft8MessagesWidget,
 };
 
-// Per-protocol decoder panels (FT8, ADS-B, AIS, ...) live on the
-// dedicated Digital Modes page now, each independently pointed at
-// whichever receiver you choose -- see decoders/DecoderPanel.tsx --
-// rather than as fixed sample-data widgets here.
+// Per-protocol decoder *configuration* (which receiver a decoder is
+// pointed at, start/stop) lives on the dedicated Digital Modes page
+// now -- see decoders/DecoderPanel.tsx. ft8Messages is different: a
+// read-only live summary (real data, across every receiver already
+// decoding FT8), the same "just show what's already been decoded"
+// shape as ActivityFeedWidget, not a configuration surface -- so it
+// stays on the Dashboard alongside the other live-status widgets.
 const DEFAULT_LG_LAYOUT: Layout[] = [
   { i: "receivers", x: 0, y: 0, w: 3, h: 10, minW: 2, minH: 6 },
   { i: "spectrumOverview", x: 3, y: 0, w: 6, h: 10, minW: 4, minH: 6 },
@@ -46,6 +51,7 @@ const DEFAULT_LG_LAYOUT: Layout[] = [
   { i: "recordings", x: 7, y: 18, w: 3, h: 8, minW: 3, minH: 5 },
   { i: "spectrumMonitor", x: 0, y: 26, w: 5, h: 8, minW: 3, minH: 5 },
   { i: "systemLog", x: 5, y: 26, w: 5, h: 8, minW: 3, minH: 5 },
+  { i: "ft8Messages", x: 0, y: 34, w: 6, h: 8, minW: 3, minH: 5 },
 ];
 
 function stackedLayout(cols: number): Layout[] {

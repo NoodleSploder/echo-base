@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { listFt8Stations, type Ft8Station } from "../api/ft8";
-import type { DecoderPanelProps } from "./types";
 
 const POLL_INTERVAL_MS = 10000;
 
 // Last-known contact per call_de (see ft8_stations.py) -- real data
-// once this decoder is pointed at a receiver tuned to a real FT8 dial
-// frequency (USB). A whole ~15s slot has to complete before anything
-// shows up here, so this can look empty for a while even with real
-// signal present.
-export function Ft8StationsPanel({ receiverId }: DecoderPanelProps) {
+// once a receiver is decoding FT8, tuned to a real dial frequency
+// (USB). A whole ~15s slot has to complete before anything shows up
+// here, so this can look empty for a while even with real signal
+// present. `receiverId`, if given, filters to just that receiver
+// (used as a DecoderPanel's live view on the Digital Modes page);
+// omitted, it shows stations from every receiver (used on the
+// Dashboard as a live summary widget) -- same dual-use shape as
+// AdsbAircraftPanel/AisVesselsPanel.
+export function Ft8StationsPanel({ receiverId }: { receiverId?: string } = {}) {
   const [stations, setStations] = useState<Ft8Station[]>([]);
 
   useEffect(() => {
