@@ -5441,3 +5441,75 @@ provenance note), `frontend/src/api/ft8.ts`,
 4. RF Coverage modeling, CME alerts/radio blackouts, AIS Class B, and
    the rest of the Geospatial Intelligence "Remaining" items are still
    open.
+
+## Refactored: ReceiverCard's decoder toggles into a real registry
+
+Called out directly: "building all of this on the Receivers page...
+seems like it's getting out of hand." Fair -- `ReceiverCard.tsx` had
+grown a hardcoded button (and, for SSTV, an inline image panel) for
+every protocol decoder as they were added this session (APRS, SAME,
+ADS-B, AIS, SSTV, FT8), becoming a wall of six decode buttons plus
+scan/recording/signal-detection/occupancy controls, most of which are
+irrelevant to whatever the receiver happens to be tuned to right now.
+
+**The fix mirrors a pattern this codebase already proved works**: the
+Geospatial map's `MapLayer` interface + self-registering `LayerRegistry`
+(each layer is one file, registers itself on import, the map/page never
+hardcodes a layer list). `frontend/src/decoders/` does the same thing
+for receiver decoders -- a `DecoderDefinition` (id, description,
+frequency bands, start/stop, an optional map-layer link, an optional
+live inline panel) + `DecoderRegistry`, with APRS/SAME/ADS-B/AIS/SSTV/
+FT8 each becoming one small file that registers itself. `ReceiverCard`
+shrank from 954 to 720 lines and now renders a single
+`<ReceiverDecoders>` instead of six hardcoded buttons and an inline
+SSTV image block.
+
+**Frequency-band awareness, the actual requested capability**: each
+decoder declares the real frequency range(s) it's meant for (ADS-B
+near 1090MHz, AIS near 162MHz, FT8 across its ~11 standard HF dial
+frequencies, SSTV across several VHF/HF calling frequencies, APRS
+across the 2m packet band). `ReceiverDecoders` compares these against
+the receiver's current tuning and visually de-emphasizes (per explicit
+direction -- *not* hides) anything out of band, so an already-running
+decoder never vanishes from view just because the receiver got
+retuned elsewhere.
+
+**"Components that can relate and chain," the other explicit ask**:
+a `DecoderDefinition` can name `feedsMapLayer`, the `geo/layers`
+`MapLayer` id its real data populates (FT8 -> `"ft8-stations"`, ADS-B
+-> `"adsb-aircraft"`, APRS -> `"aprs-stations"`) -- a real, named
+relationship between a decoder and the map layer it feeds, surfaced in
+the toggle's tooltip, rather than the two being silently unrelated
+pieces of UI that happen to share a backend.
+
+**State sharing, not duplicated polling**: `ReceiverCard` already
+polled `GET .../capture-health` once per receiver for its own concerns
+(capture-stalled detection, triggered-recording state); the six
+decoder-enabled booleans that poll used to set directly are now derived
+by `ReceiverDecoders` from that same shared poll result, passed down as
+a prop, rather than each decoder polling the same endpoint separately.
+
+**Files added**: `frontend/src/decoders/types.ts`, `DecoderRegistry.ts`,
+`AprsDecoder.ts`, `SameDecoder.ts`, `AdsbDecoder.ts`, `AisDecoder.ts`,
+`SstvDecoder.ts`, `SstvPanel.tsx`, `Ft8Decoder.ts`, `index.ts`,
+`frontend/src/components/receivers/ReceiverDecoders.tsx`. No backend
+changes -- this is purely a frontend architecture/UX refactor.
+
+## Verification
+
+- Frontend: `tsc -b` clean, `vite build` clean, `eslint` clean (3
+  pre-existing warnings only, same as before this refactor).
+- Backend: untouched; `pytest` still 231/231 (re-run to confirm no
+  incidental breakage, since none was expected).
+- No browser available in this environment to visually confirm the
+  new toggle layout/de-emphasis styling -- verified via successful
+  build/lint and careful reading, same limitation noted for all
+  frontend work this session.
+
+## Next Steps
+
+1. Visual confirmation of the new decoder toggle row (spacing,
+   de-emphasis opacity, tooltip wording) once a browser is available.
+2. The same registry pattern could extend to the generic tools
+   (signal detection, occupancy, scan) if they ever need frequency-
+   band awareness too, though they're not protocol-specific today.

@@ -4,30 +4,17 @@ import {
   getOccupancy,
   getScanStatus,
   getSignalHistory,
-  getSstvSnapshot,
   setPpmCorrection,
-  sstvImagePath,
-  startAdsBDecoding,
-  startAisDecoding,
-  startAprsDecoding,
-  startFt8Decoding,
   startOccupancy,
   startReceiver,
-  startSameDecoding,
   startScan,
   startSignalDetection,
-  startSstvDecoding,
-  stopAdsBDecoding,
-  stopAisDecoding,
-  stopAprsDecoding,
-  stopFt8Decoding,
   stopOccupancy,
   stopReceiver,
-  stopSameDecoding,
   stopScan,
   stopSignalDetection,
-  stopSstvDecoding,
   tuneReceiver,
+  type CaptureHealth,
 } from "../../api/receivers";
 import {
   cancelScheduledRecording,
@@ -43,6 +30,7 @@ import { useAudioPlayer } from "../../hooks/useAudioPlayer";
 import type { ReceiverDescriptor, ReceiverStatus } from "../../types";
 import { Card } from "../common/Card";
 import { StatusBadge } from "../common/StatusBadge";
+import { ReceiverDecoders } from "./ReceiverDecoders";
 
 // Matches backend/app/services/dsp.py's DEMODULATORS -- USB/LSB (SSB)
 // demod isn't implemented in software yet, so only FM/AM are offered.
@@ -66,21 +54,7 @@ export function ReceiverCard({
   const [listening, setListening] = useState(false);
   const [mode, setMode] = useState("fm");
   const [squelch, setSquelch] = useState(0);
-  const [aprsEnabled, setAprsEnabled] = useState(false);
-  const [aprsBusy, setAprsBusy] = useState(false);
-  const [sameEnabled, setSameEnabled] = useState(false);
-  const [sameBusy, setSameBusy] = useState(false);
-  const [adsBEnabled, setAdsBEnabled] = useState(false);
-  const [adsBBusy, setAdsBBusy] = useState(false);
-  const [aisEnabled, setAisEnabled] = useState(false);
-  const [aisBusy, setAisBusy] = useState(false);
-  const [sstvEnabled, setSstvEnabled] = useState(false);
-  const [sstvBusy, setSstvBusy] = useState(false);
-  const [sstvSnapshot, setSstvSnapshot] = useState<{ linesDecoded: number; totalLines: number } | null>(
-    null,
-  );
-  const [ft8Enabled, setFt8Enabled] = useState(false);
-  const [ft8Busy, setFt8Busy] = useState(false);
+  const [captureHealth, setCaptureHealth] = useState<CaptureHealth | null>(null);
   const [scanFrequencies, setScanFrequencies] = useState("");
   const [scanDwellSeconds, setScanDwellSeconds] = useState(2);
   const [scanBusy, setScanBusy] = useState(false);
@@ -157,91 +131,6 @@ export function ReceiverCard({
       onChange(await setPpmCorrection(receiver.id, ppm));
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function handleToggleAprs() {
-    setAprsBusy(true);
-    try {
-      if (aprsEnabled) {
-        await stopAprsDecoding(receiver.id);
-      } else {
-        await startAprsDecoding(receiver.id);
-      }
-      setAprsEnabled((prev) => !prev);
-    } finally {
-      setAprsBusy(false);
-    }
-  }
-
-  async function handleToggleSame() {
-    setSameBusy(true);
-    try {
-      if (sameEnabled) {
-        await stopSameDecoding(receiver.id);
-      } else {
-        await startSameDecoding(receiver.id);
-      }
-      setSameEnabled((prev) => !prev);
-    } finally {
-      setSameBusy(false);
-    }
-  }
-
-  async function handleToggleAdsB() {
-    setAdsBBusy(true);
-    try {
-      if (adsBEnabled) {
-        await stopAdsBDecoding(receiver.id);
-      } else {
-        await startAdsBDecoding(receiver.id);
-      }
-      setAdsBEnabled((prev) => !prev);
-    } finally {
-      setAdsBBusy(false);
-    }
-  }
-
-  async function handleToggleAis() {
-    setAisBusy(true);
-    try {
-      if (aisEnabled) {
-        await stopAisDecoding(receiver.id);
-      } else {
-        await startAisDecoding(receiver.id);
-      }
-      setAisEnabled((prev) => !prev);
-    } finally {
-      setAisBusy(false);
-    }
-  }
-
-  async function handleToggleSstv() {
-    setSstvBusy(true);
-    try {
-      if (sstvEnabled) {
-        await stopSstvDecoding(receiver.id);
-        setSstvSnapshot(null);
-      } else {
-        await startSstvDecoding(receiver.id);
-      }
-      setSstvEnabled((prev) => !prev);
-    } finally {
-      setSstvBusy(false);
-    }
-  }
-
-  async function handleToggleFt8() {
-    setFt8Busy(true);
-    try {
-      if (ft8Enabled) {
-        await stopFt8Decoding(receiver.id);
-      } else {
-        await startFt8Decoding(receiver.id);
-      }
-      setFt8Enabled((prev) => !prev);
-    } finally {
-      setFt8Busy(false);
     }
   }
 
@@ -365,31 +254,6 @@ export function ReceiverCard({
     };
   }, [occupancyEnabled, receiver.id]);
 
-  useEffect(() => {
-    if (!sstvEnabled) return;
-    let cancelled = false;
-    async function poll() {
-      try {
-        const snapshot = await getSstvSnapshot(receiver.id);
-        if (!cancelled) {
-          setSstvSnapshot({ linesDecoded: snapshot.lines_decoded, totalLines: snapshot.total_lines });
-        }
-      } catch {
-        // Transient poll failure; keep showing the last good reading.
-      }
-    }
-    void poll();
-    // Fast enough to feel like watching the image draw in live, slow
-    // enough not to hammer the endpoint -- a full 256-line Martin M1
-    // image takes ~2 minutes to transmit, so a new line every second
-    // or so is still a meaningfully "live" refresh rate.
-    const interval = setInterval(poll, 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [sstvEnabled, receiver.id]);
-
   async function handleToggleTriggeredRecording() {
     setTriggeredRecordingBusy(true);
     try {
@@ -416,6 +280,7 @@ export function ReceiverCard({
       try {
         const health = await getCaptureHealth(receiver.id);
         if (cancelled) return;
+        setCaptureHealth(health);
         if (typeof health.triggered_recording_armed === "boolean") {
           setTriggeredRecordingArmed(health.triggered_recording_armed);
         }
@@ -427,12 +292,6 @@ export function ReceiverCard({
           health.alive === false ||
           (typeof health.last_read_age_seconds === "number" && health.last_read_age_seconds > 3);
         setCaptureStalled(stalled);
-        if (typeof health.aprs_enabled === "boolean") setAprsEnabled(health.aprs_enabled);
-        if (typeof health.same_enabled === "boolean") setSameEnabled(health.same_enabled);
-        if (typeof health.ads_b_enabled === "boolean") setAdsBEnabled(health.ads_b_enabled);
-        if (typeof health.ais_enabled === "boolean") setAisEnabled(health.ais_enabled);
-        if (typeof health.sstv_enabled === "boolean") setSstvEnabled(health.sstv_enabled);
-        if (typeof health.ft8_enabled === "boolean") setFt8Enabled(health.ft8_enabled);
         if (typeof health.signal_detection_enabled === "boolean") {
           setSignalDetectionEnabled(health.signal_detection_enabled);
         }
@@ -695,104 +554,11 @@ export function ReceiverCard({
         )}
 
         {supportsAudio && (
-          <div className="flex gap-2 border-t border-base-700 pt-3">
-            <button
-              onClick={() => void handleToggleAprs()}
-              disabled={aprsBusy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                aprsEnabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Decoded APRS packets appear in the Activity Feed, System Log, and Messaging Center widgets"
-            >
-              {aprsEnabled ? "APRS Decoding On" : "Decode APRS"}
-            </button>
-            <button
-              onClick={() => void handleToggleSame()}
-              disabled={sameBusy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                sameEnabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Decoded NOAA Weather Radio SAME alerts appear in the Activity Feed, System Log, and Alerts widgets"
-            >
-              {sameEnabled ? "SAME Decoding On" : "Decode SAME"}
-            </button>
-            <button
-              onClick={() => void handleToggleAdsB()}
-              disabled={adsBBusy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                adsBEnabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Needs a wideband capture (tune to 1090MHz, sample rate >=2MS/s) to decode anything real -- decoded aircraft appear in the Activity Feed and System Log widgets"
-            >
-              {adsBEnabled ? "ADS-B Decoding On" : "Decode ADS-B"}
-            </button>
-            <button
-              onClick={() => void handleToggleAis()}
-              disabled={aisBusy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                aisEnabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Tune to a marine AIS channel (161.975MHz/162.025MHz) to decode anything real -- decoded vessels appear in the Activity Feed and System Log widgets"
-            >
-              {aisEnabled ? "AIS Decoding On" : "Decode AIS"}
-            </button>
-            <button
-              onClick={() => void handleToggleSstv()}
-              disabled={sstvBusy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                sstvEnabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Slow-Scan TV: tune to a real SSTV frequency (e.g. 145.800MHz FM during an ISS SSTV event) to watch a picture decode live, line by line"
-            >
-              {sstvEnabled ? "SSTV Decoding On" : "Decode SSTV"}
-            </button>
-            <button
-              onClick={() => void handleToggleFt8()}
-              disabled={ft8Busy}
-              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
-                ft8Enabled
-                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
-                  : "border border-base-600 text-slate-300 hover:bg-base-800"
-              }`}
-              title="Tune to a real FT8 frequency (e.g. 14.074MHz USB -- needs HF coverage, not just a plain RTL-SDR's native VHF/UHF range). Decodes appear on the map and in the Activity Feed; a whole ~15s slot has to complete before anything shows up"
-            >
-              {ft8Enabled ? "FT8 Decoding On" : "Decode FT8"}
-            </button>
-          </div>
-        )}
-
-        {sstvEnabled && (
-          <div className="border-t border-base-700 pt-3">
-            <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
-              <span>SSTV Image (Martin M1)</span>
-              {sstvSnapshot && (
-                <span>
-                  {sstvSnapshot.linesDecoded} / {sstvSnapshot.totalLines} lines
-                  {sstvSnapshot.linesDecoded >= sstvSnapshot.totalLines && (
-                    <span className="ml-1 text-emerald-400">complete</span>
-                  )}
-                </span>
-              )}
-            </div>
-            <div className="overflow-hidden rounded-md border border-base-700 bg-black">
-              <img
-                src={`${sstvImagePath(receiver.id)}?t=${sstvSnapshot?.linesDecoded ?? 0}`}
-                alt="Live-decoding SSTV picture"
-                className="w-full"
-                style={{ imageRendering: "pixelated" }}
-              />
-            </div>
-          </div>
+          <ReceiverDecoders
+            receiverId={receiver.id}
+            frequencyHz={status?.frequency_hz ?? null}
+            captureHealth={captureHealth}
+          />
         )}
 
         {supportsAudio && (

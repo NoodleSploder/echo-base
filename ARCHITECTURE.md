@@ -863,6 +863,86 @@ toggle/lifecycle model around them.
 
 ---
 
+# Receiver Decoder Registry (frontend)
+
+`ReceiverCard.tsx` grew a hardcoded button (and, for SSTV, an inline
+image panel) for every protocol decoder as they were added -- APRS,
+SAME, ADS-B, AIS, SSTV, FT8 -- until the card became a wall of buttons
+most of which are irrelevant to whatever the receiver is actually
+tuned to at any given moment. `frontend/src/decoders/` fixes this with
+the exact same self-registration pattern the Geospatial map's
+`MapLayer`/`LayerRegistry` already established: a `DecoderDefinition`
+interface, a `DecoderRegistry`, and one file per decoder that
+registers itself as a side effect of being imported.
+
+## The `DecoderDefinition` interface
+
+```ts
+interface DecoderDefinition {
+  id: string;
+  name: string;
+  description: string;
+  bands: FrequencyBand[];      // where this decoder is meant to be used
+  healthKey: keyof CaptureHealth; // which capture-health field reflects it
+  start: (receiverId: string) => Promise<unknown>;
+  stop: (receiverId: string) => Promise<unknown>;
+  feedsMapLayer?: string;      // the geo/layers MapLayer id it populates, if any
+  Panel?: ComponentType<{ receiverId: string }>; // optional live inline panel
+}
+```
+
+`ReceiverDecoders.tsx` (rendered once per receiver card) queries the
+registry, renders one toggle per decoder, and mounts a decoder's
+`Panel` only while it's enabled -- SSTV's progressively-decoding image
+(`decoders/SstvPanel.tsx`) manages its own polling lifecycle entirely
+within that panel now, rather than living inline in `ReceiverCard`
+gated by a boolean.
+
+## Frequency-band awareness -- a real "relates to" link, not just a filter
+
+Each decoder declares the frequency range(s) it's meant for (e.g. ADS-B
+near 1090MHz, FT8 across its ~11 standard HF dial frequencies, SSTV
+across several VHF/HF calling frequencies). `ReceiverDecoders` compares
+these against the receiver's current tuning and visually de-emphasizes
+(not hides -- an already-running decoder should never disappear from
+view just because the receiver got retuned) any decoder outside its
+band. This was a deliberate choice over hiding entirely: a `title`
+tooltip on an out-of-band toggle explains why it looks that way rather
+than just being invisible.
+
+`feedsMapLayer` is the other half of "components that relate and
+chain": a decoder can name the `geo/layers` `MapLayer` id its real data
+populates (e.g. FT8's decoder names `"ft8-stations"`), so the UI can
+tell the user "enabling this also lights up the map" instead of the
+decoder toggle and the map layer being two silently unrelated pieces
+of UI that happen to share data.
+
+## State, shared from one poll
+
+`ReceiverCard` already polls `GET .../capture-health` once per
+receiver for its own concerns (capture-stalled detection, triggered-
+recording state); `ReceiverDecoders` receives that same poll result as
+a prop and derives each decoder's enabled state from
+`captureHealth[decoder.healthKey]`, rather than each decoder polling
+the same endpoint separately. A decoder enabled from elsewhere (e.g. a
+suggested receiver profile that enables it server-side directly) shows
+up correctly here too, for the same reason the original inline
+version did.
+
+## Future extensibility
+
+Adding a new decoder requires, at most:
+
+1. The backend route/toggle if it doesn't already exist.
+2. A `DecoderDefinition` file in `frontend/src/decoders/`.
+3. One import line in `decoders/index.ts`.
+
+No changes to `ReceiverCard`, `ReceiverDecoders`, or any other
+decoder -- the same shape of extensibility guarantee `MapLayer` gives
+the Geospatial platform.
+
+---
+
 # Future Vision
 
 Echo Base should become the open-source platform for radio operations.
