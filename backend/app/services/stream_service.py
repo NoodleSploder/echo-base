@@ -345,6 +345,45 @@ class _ReceiverCapture:
         if self._thread is not None:
             self._thread.join(timeout=2)
 
+    def retune(self) -> None:
+        """Restarts the underlying capture (a fresh `open_handle()` call,
+        e.g. a new `rtl_sdr` subprocess) so a frequency change actually
+        takes effect. `open_iq_stream` bakes the frequency in at
+        subprocess-launch time -- there is no way to retune a running
+        one -- so plugin.tune() alone only updates in-memory state
+        while the old subprocess keeps streaming from wherever it was
+        originally opened. Reuses this same `_ReceiverCapture` instance
+        (not a new one) so subscribers and decoder-enabled state
+        survive the restart untouched.
+
+        Retries a few times with backoff: the outgoing process's USB
+        claim isn't always released instantly, so a new one launched
+        right away can lose that race and exit immediately (observed
+        in practice against real hardware). `stop()` is called before
+        every attempt (including the first) so a fast-failed previous
+        attempt's dead subprocess is always reaped -- otherwise it's
+        left as an unreaped zombie forever, since nothing else calls
+        `.close()`/`.wait()` on a handle whose thread merely exited on
+        its own EOF."""
+        for attempt in range(4):
+            self.stop()
+            if attempt:
+                time.sleep(0.5 * attempt)
+            self._stop_event.clear()
+            self._read_count = 0
+            self._last_read_at = None
+            try:
+                self.start()
+            except Exception:
+                logger.exception("Retune attempt %d for '%s' failed to launch", attempt + 1, self.receiver_id)
+                continue
+            time.sleep(0.4)
+            if self._thread is not None and self._thread.is_alive():
+                return
+        logger.warning(
+            "Retune for '%s' failed after %d attempts; capture left stopped.", self.receiver_id, attempt + 1
+        )
+
     def _run(self) -> None:
         assert self._handle is not None
         sample_rate_hz = self._handle.sample_rate_hz
@@ -626,6 +665,21 @@ class StreamService:
             await asyncio.to_thread(capture.start)
             self._captures[receiver_id] = capture
         return capture
+
+    async def retune(self, receiver_id: str) -> None:
+        """No-op if the receiver has no capture at all -- a frequency
+        change that hasn't started streaming yet needs no restart, since
+        the next `open_iq_stream` will already use the new frequency.
+        A capture that exists but is already dead (e.g. a previous
+        retune attempt exhausted its retries) still gets retuned rather
+        than skipped: its subscriber queues are still attached and
+        waiting, and dropping it here would leave them stalled forever
+        instead of reviving on the very next tune."""
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            await asyncio.to_thread(capture.retune)
 
     async def _drop_if_idle(self, receiver_id: str) -> None:
         capture = self._captures.get(receiver_id)

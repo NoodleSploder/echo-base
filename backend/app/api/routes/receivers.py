@@ -168,6 +168,7 @@ async def tune_receiver(
     _: User = Depends(require_operator),
 ) -> dict:
     status = await service.tune(receiver_id, payload.frequency)
+    await stream_service.retune(receiver_id)
     return _status_response(status, receiver_id, stream_service)
 
 

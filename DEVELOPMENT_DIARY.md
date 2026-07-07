@@ -5678,3 +5678,68 @@ whether the receiver's *current* tuning happens to be in range.
   pre-existing warnings, no new ones).
 - Backend: untouched; 231/231 passing.
 - No browser here to confirm the dropdown/table rendering live.
+
+## Fixed: tuning never actually retuned an already-streaming receiver
+
+User feedback from a real screenshot: after picking a band, the
+dropdown just reset back to "Tune to band..." instead of showing what
+was selected, and the Dashboard spectrum waterfall showed the same
+criss-cross pattern no matter what frequency was picked -- suspected
+of being fake/sample data.
+
+It wasn't fake data -- it was real FFT output, just from the *wrong*
+frequency. Root cause, in `plugins/rtl_sdr/plugin.py`: `tune()` only
+updates the plugin's own in-memory `frequency_hz` field. The actual
+`rtl_sdr` subprocess only accepts its frequency via a `-f` argument at
+launch and has no live-retune capability, so once a receiver's IQ
+capture was already running (e.g. from the Dashboard's Spectrum
+Monitor), every subsequent tune was a complete no-op against the real
+hardware -- the dongle stayed locked at whichever frequency it first
+opened with, while the UI/API happily reported back the newly
+"tuned" frequency as if it had worked.
+
+Fixed by adding `_ReceiverCapture.retune()` / `StreamService.retune()`
+(`services/stream_service.py`), which restarts the underlying capture
+(closes the old `rtl_sdr` subprocess, opens a new one at the
+now-updated frequency) in place -- reusing the same `_ReceiverCapture`
+instance so every subscriber queue and decoder-enabled flag survives
+the restart untouched. Wired into `POST .../tune`
+(`api/routes/receivers.py`) right after `service.tune()`.
+
+Two more bugs surfaced while verifying this against the real dongle:
+- A freshly relaunched `rtl_sdr` can lose the race for the outgoing
+  process's USB claim and exit immediately (`usb_claim_interface
+  error -6`) if launched right away -- `retune()` now retries up to 4
+  times with backoff before giving up.
+- Any subprocess that exits on its own (crash, or the race above) left
+  an unreaped zombie forever, because `stop()` (the only thing that
+  calls `.close()`/`.wait()` on the `Popen` handle) was never invoked
+  for a thread that merely observed EOF and returned -- `retune()` now
+  unconditionally calls `stop()` before every attempt, including the
+  first, so a previous fast-failed attempt's zombie always gets reaped
+  before trying again. `StreamService.retune()` was also changed to
+  still retune (not skip) a capture that's already dead, since its
+  subscriber queues are still attached and waiting -- skipping it would
+  leave an already-open Dashboard spectrum view stalled forever instead
+  of reviving on the next tune.
+
+Also fixed the band dropdown itself (`DecoderPanel.tsx`): it's now a
+controlled `<select>` whose value reflects the band matching the
+receiver's actual current frequency (from the existing health/status
+poll), rather than an uncontrolled one that always snapped back to the
+placeholder right after a selection.
+
+### Verification (against real hardware, `rtl_sdr:00000001`)
+
+- Reproduced the original bug: `ps` showed the `rtl_sdr` subprocess
+  still running at its original launch frequency even after several
+  `POST .../tune` calls to different bands.
+- After the fix: tuning to 432.174MHz, 7.074MHz, and 14.074MHz in
+  sequence each produced a fresh `rtl_sdr -f <new freq> ...` process
+  (confirmed via `ps`) and a live-climbing `read_count` /
+  sub-100ms `last_read_age_seconds` in `GET .../capture-health` at
+  each frequency -- no zombies left behind (`ps aux | grep rtl_sdr`
+  clean after each retune).
+- Backend: 231/231 passing.
+- Frontend: `tsc -b`, `vite build`, `eslint` clean (same 3 pre-existing
+  warnings).

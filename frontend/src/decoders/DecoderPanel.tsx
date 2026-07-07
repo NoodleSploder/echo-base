@@ -78,7 +78,6 @@ export function DecoderPanel({ decoder }: { decoder: DecoderDefinition }) {
 
   async function handleBandChange(event: ChangeEvent<HTMLSelectElement>) {
     const hz = Number(event.target.value);
-    event.target.value = ""; // a one-shot action ("tune now"), not a persistent selection
     if (!receiverId || !Number.isFinite(hz) || hz <= 0) return;
     setTuning(true);
     try {
@@ -133,13 +132,15 @@ export function DecoderPanel({ decoder }: { decoder: DecoderDefinition }) {
 
         {decoder.bands.length > 0 && (
           <select
-            defaultValue=""
+            value={decoder.bands.find((band) => band.hz === frequencyHz)?.hz ?? ""}
             onChange={(event) => void handleBandChange(event)}
             disabled={!receiverId || enabled || tuning}
             title="Tune the selected receiver to one of this decoder's standard frequencies"
             className="w-full rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-200 disabled:opacity-50"
           >
-            <option value="">{tuning ? "Tuning..." : "Tune to band..."}</option>
+            <option value="" disabled>
+              {tuning ? "Tuning..." : "Tune to band..."}
+            </option>
             {decoder.bands.map((band) => (
               <option key={band.label} value={band.hz}>
                 {band.label}
