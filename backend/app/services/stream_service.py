@@ -39,12 +39,14 @@ from app.services.decoders.afsk import Afsk1200Decoder
 from app.services.decoders.ais import AisDecoder
 from app.services.decoders.aprs_position import parse_aprs_position
 from app.services.decoders.ax25 import format_callsign, format_path, parse_ax25_frame
+from app.services.decoders.ft8_decoder import decode_window as ft8_decode_window
+from app.services.decoders.ft8_message import grid_to_lat_lon as ft8_grid_to_lat_lon
 from app.services.decoders.mode_s import ModeSDecoder
 from app.services.decoders.same import SameDecoder, parse_same_header
 from app.services.decoders.same_codes import describe_event, describe_location
 from app.services.decoders.sstv import HEIGHT as SSTV_HEIGHT
 from app.services.decoders.sstv import MartinM1Decoder
-from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator
+from app.services.dsp import AUDIO_SAMPLE_RATE_HZ, DEMODULATORS, fm_discriminator, usb_discriminator
 from app.services.receiver_service import ReceiverService
 from app.services.signal_detection import (
     OccupancyTracker,
@@ -59,6 +61,12 @@ READ_SAMPLES = 4800  # ~20-100ms of IQ per read, depending on capture rate
 FFT_SIZE = 1024
 OUTPUT_BINS = 512
 QUEUE_SIZE = 8
+FT8_SLOT_SECONDS = 15.0
+# A slot plus margin, so an imperfectly-clock-aligned capture still
+# has the whole just-completed transmission somewhere in the buffer
+# (the decoder's own sync search additionally tolerates a few hundred
+# ms of misalignment on top of this).
+FT8_BUFFER_SECONDS = 17.0
 
 
 def _rebin(magnitudes_db: np.ndarray, bins: int) -> np.ndarray:
@@ -123,6 +131,10 @@ class _ReceiverCapture:
         self._ais_decoder: AisDecoder | None = None
         self._sstv_enabled = False
         self._sstv_decoder: MartinM1Decoder | None = None
+        self._ft8_enabled = False
+        self._ft8_buffer = np.zeros(0, dtype=np.float32)
+        self._ft8_last_slot: int | None = None
+        self._ft8_decode_in_progress = False
         self._signal_detection_enabled = False
         self._signal_margin_db = 0.0
         self._signal_center_frequency_hz: int | None = None
@@ -165,6 +177,7 @@ class _ReceiverCapture:
             "ads_b_enabled": self._ads_b_enabled,
             "ais_enabled": self._ais_enabled,
             "sstv_enabled": self._sstv_enabled,
+            "ft8_enabled": self._ft8_enabled,
             "signal_detection_enabled": self._signal_detection_enabled,
             "occupancy_enabled": self._occupancy_enabled,
         }
@@ -179,6 +192,7 @@ class _ReceiverCapture:
             and not self._ads_b_enabled
             and not self._ais_enabled
             and not self._sstv_enabled
+            and not self._ft8_enabled
             and not self._signal_detection_enabled
             and not self._occupancy_enabled
         )
@@ -221,6 +235,14 @@ class _ReceiverCapture:
     def disable_sstv(self) -> None:
         self._sstv_enabled = False
         self._sstv_decoder = None
+
+    def enable_ft8(self) -> None:
+        self._ft8_enabled = True
+
+    def disable_ft8(self) -> None:
+        self._ft8_enabled = False
+        self._ft8_buffer = np.zeros(0, dtype=np.float32)
+        self._ft8_last_slot = None
 
     def sstv_snapshot(self) -> dict | None:
         """A point-in-time read of the currently-decoding (or last
@@ -388,6 +410,9 @@ class _ReceiverCapture:
 
                 if self._sstv_enabled:
                     self._decode_sstv(complex_samples, decimation)
+
+                if self._ft8_enabled:
+                    self._decode_ft8(complex_samples, decimation)
         except Exception:
             logger.exception("Capture worker for '%s' crashed", self.receiver_id)
         finally:
@@ -470,6 +495,63 @@ class _ReceiverCapture:
             self._sstv_decoder = MartinM1Decoder(AUDIO_SAMPLE_RATE_HZ)
         audio = fm_discriminator(complex_samples, decimation)
         self._sstv_decoder.feed(audio)
+
+    def _decode_ft8(self, complex_samples: np.ndarray, decimation: int) -> None:
+        # FT8 is virtually always transmitted USB on HF -- tune to a
+        # real FT8 frequency (e.g. 14.074MHz dial + enough upconverter/
+        # direct-sampling setup to reach HF at all on an RTL-SDR) for
+        # this to decode anything real. Unlike every other decoder
+        # here, FT8 is a *batch* protocol: a whole ~15s, UTC-aligned
+        # slot has to be seen at once, so this only ever accumulates a
+        # rolling buffer and kicks off a decode once per slot boundary
+        # -- see decoders/ft8_decoder.py's module docstring.
+        audio = usb_discriminator(complex_samples, decimation)
+        self._ft8_buffer = np.concatenate([self._ft8_buffer, audio.astype(np.float32)])
+        max_samples = int(FT8_BUFFER_SECONDS * AUDIO_SAMPLE_RATE_HZ)
+        if len(self._ft8_buffer) > max_samples:
+            self._ft8_buffer = self._ft8_buffer[-max_samples:]
+
+        current_slot = int(time.time() // FT8_SLOT_SECONDS)
+        if self._ft8_last_slot is None:
+            self._ft8_last_slot = current_slot
+            return
+        if current_slot == self._ft8_last_slot:
+            return
+        self._ft8_last_slot = current_slot
+
+        min_samples = int(FT8_SLOT_SECONDS * AUDIO_SAMPLE_RATE_HZ)
+        if len(self._ft8_buffer) < min_samples or self._ft8_decode_in_progress:
+            return  # not enough audio yet, or the previous slot's decode is still running
+
+        self._ft8_decode_in_progress = True
+        buffer_copy = self._ft8_buffer.copy()
+        threading.Thread(target=self._run_ft8_decode, args=(buffer_copy,), daemon=True).start()
+
+    def _run_ft8_decode(self, audio: np.ndarray) -> None:
+        # Runs off the real-time capture thread -- a decode takes
+        # several seconds (Costas sync search over the whole slot),
+        # which would otherwise stall spectrum/audio/every other
+        # decoder sharing this same capture for that long.
+        try:
+            decodes = ft8_decode_window(audio, AUDIO_SAMPLE_RATE_HZ)
+        except Exception:
+            logger.exception("FT8 decode failed for '%s'", self.receiver_id)
+            decodes = []
+        finally:
+            self._ft8_decode_in_progress = False
+
+        for decode in decodes:
+            data: dict[str, object] = {
+                "call_to": decode.message.call_to,
+                "call_de": decode.message.call_de,
+                "extra": decode.message.extra,
+                "frequency_offset_hz": decode.frequency_hz,
+            }
+            position = ft8_grid_to_lat_lon(decode.message.extra.removeprefix("R "))
+            if position is not None:
+                data["grid"] = decode.message.extra.removeprefix("R ")
+                data["latitude"], data["longitude"] = position
+            self._event_bus.emit("Ft8Message", source=self.receiver_id, data=data)
 
     def _detect_signals(self, magnitude_db: np.ndarray, sample_rate_hz: int) -> None:
         assert self._peak_tracker is not None
@@ -697,6 +779,26 @@ class StreamService:
     def get_sstv_image_png(self, receiver_id: str) -> bytes | None:
         capture = self._captures.get(receiver_id)
         return capture.sstv_image_png() if capture is not None else None
+
+    async def enable_ft8(self, receiver_id: str) -> None:
+        """Same idempotent shape as `enable_ais`, but emits `Ft8Message`
+        events only once per ~15-second UTC slot boundary (a whole
+        slot's worth of audio has to be seen at once to decode it --
+        see decoders/ft8_decoder.py). Tune to a real FT8 frequency
+        (e.g. 14.074MHz USB, needing HF coverage this project's plain
+        RTL-SDR support doesn't have on its own) for this to decode
+        anything real."""
+        async with self._lock:
+            capture = await self._get_or_create(receiver_id)
+            capture.enable_ft8()
+
+    async def disable_ft8(self, receiver_id: str) -> None:
+        async with self._lock:
+            capture = self._captures.get(receiver_id)
+            if capture is None:
+                return
+            capture.disable_ft8()
+            await self._drop_if_idle(receiver_id)
 
     async def enable_signal_detection(
         self, receiver_id: str, margin_db: float, center_frequency_hz: int | None

@@ -5278,3 +5278,166 @@ exact same capture pipeline that was stalled.
    (needs real air traffic in range of whatever antenna is attached).
 2. RF Coverage modeling, CME alerts/radio blackouts, AIS Class B
    remain the other open items from earlier entries.
+
+## Added: FT8 decoder -- Costas sync, LDPC, and a real off-air catch
+
+The biggest single piece of DSP/coding-theory work this session, and
+explicitly requested with a map integration in mind ("make them show
+up on the map"). FT8 is meaningfully harder than every other decoder
+in this project: it needs (1) time+frequency sync search against a
+known Costas pattern, (2) 8-FSK soft-symbol extraction via FFT, (3) a
+real (174,91) LDPC belief-propagation decoder -- an actual forward-
+error-correction code, not just a CRC or bit-field parse -- and (4) a
+compact, quirky message-packing scheme (base-37 callsigns, a Maidenhead
+grid or signal report, special CQ/DE/QRZ tokens). Getting the LDPC
+matrices even one bit wrong from memory would produce a decoder that
+"looks complete" and compiles/runs fine but never correctly decodes a
+single real signal -- a failure mode no amount of code review would
+catch without an authoritative external check.
+
+**Deliberately did not implement this from memory.** Fetched the
+actual numeric tables (Costas pattern, Gray map, the LDPC generator
+and parity-check matrices, the CRC-14 polynomial) from the MIT-
+licensed, widely-used open-source decoder github.com/kgoba/ft8_lib --
+not by hand-transcribing (an early attempt at that produced a
+corrupted generator-matrix file with stray `.replace()` artifacts from
+trying to "clean up" long hex strings by hand -- caught before it
+became a silent bug, and redone properly), but by writing a small
+Python script to parse the actual `constants.c` source directly and
+emit a clean Python module, then asserting every single parsed table
+matches the source byte-for-byte. This is a case where "don't
+hallucinate correctness-critical data, go get the authoritative source
+and verify it algorithmically" mattered more than usual -- a single
+wrong LDPC parity-check index is invisible in a code review and fatal
+to every real decode.
+
+**A genuinely important empirical finding, not trusted from a
+comment**: `ldpc.c`'s own source comment documents its LLR input
+convention as `log(P(x=0)/P(x=1))` (positive = bit likely 0). Compiled
+and ran that exact C code with a known codeword and full-confidence
+LLRs built following the documented convention -- it decoded with
+156/174 bits *wrong*. Tried the opposite sign convention -- 0 errors,
+bit-exact. The module's docstring documents the verified (opposite-of-
+the-comment) convention, not the comment, and the diary records why:
+trust the compiled behavior over the prose next to it.
+
+**Verification methodology, escalating in strength**:
+1. CRC-14 and the LDPC decoder: compiled `crc.c`/`ldpc.c` directly via
+   `gcc`, ran them against known inputs, and asserted the Python port
+   produces bit-identical output -- both perfect-confidence and (for
+   LDPC) a moderately noisy 8-bit-flip case.
+2. Message unpacking: compiled `message.c`, called the real
+   `ftx_message_encode_std("CQ", "K1ABC", "FN42")` (and several
+   variants -- a `/P` suffix, a `CQ 123` modifier, a negative signal
+   report, and a deliberately-unsupported hashed callsign case --
+   "N0CALL" doesn't fit the base-37 encoding's 3-letter suffix limit,
+   so the real encoder itself falls back to hashing, which this
+   decoder correctly and honestly returns `None` for rather than
+   guessing) and compared the exact payload bytes.
+3. The full receiver (sync search + demod + LDPC + unpack): rather
+   than only a synthetic round-trip (which can't catch a systematic
+   sync/demod bug -- an encoder and decoder built with the same wrong
+   assumption would "agree" with each other and pass anyway), fetched
+   a **real, off-air 15-second FT8 recording** from ft8_lib's own test
+   suite (`test/wav/191111_110615.wav`, 12kHz mono, captured
+   2019-11-11) along with its independently-published ground-truth
+   decode list (21 real stations, from a completely different, mature
+   decoder). This project's from-scratch decoder correctly recovered
+   8 of those 21 real signals, zero false positives. That's the
+   strongest evidence in this codebase that a receiver chain is
+   actually correct, not just internally consistent.
+
+**A real, load-bearing gap found along the way**: FT8 is virtually
+always transmitted USB (upper sideband) on HF, and this project's
+`dsp.py` only had FM and AM demodulators -- neither correctly recovers
+SSB audio. Added `usb_discriminator`/`usb_demodulate`: for USB, taking
+the real part of the complex baseband directly *is* the demodulated
+audio (the same technique general SDR software like GQRX/SDR# uses),
+no Hilbert-transform sideband filter needed given the standard SSB
+tuning convention. Without this, FT8 would decode perfectly against a
+test file but never work against anything a real receiver produced.
+
+**Architecture, deliberately different from every other decoder
+here**: FT8 is a *batch*, not *streaming*, protocol -- a whole
+~15-second, UTC-aligned slot has to be seen at once. `StreamService`
+accumulates a rolling ~17s buffer (slot + margin, since the decoder's
+own sync search additionally tolerates a few hundred ms of
+misalignment) and, once the wall clock crosses a 15-second boundary,
+hands a copy of the buffer to a background `threading.Thread` for
+decoding (a real decode takes several seconds -- doing it inline in
+the capture loop would stall spectrum/audio/every other decoder
+sharing that capture for that long). A simple in-progress flag
+prevents overlapping decode threads from piling up if one ever runs
+past the next slot boundary.
+
+**Map integration** (the actual ask): decoded stations persist to a
+new `ft8_stations` table (last-known contact per `call_de`, same
+upsert shape as `aprs_stations`/`adsb_aircraft`), with the Maidenhead
+grid converted to its centroid lat/lon. A new `Ft8StationsLayer` shows
+them on `/map`, default-off (needs an active HF/USB capture). Position
+resolution is deliberately coarse (a 4-character grid is roughly
+150km x 300km at mid-latitudes) -- the same resolution every real FT8
+spotting map (e.g. PSKReporter) shows, not a limitation specific to
+this implementation.
+
+**Scope, honestly bounded**: only "standard" messages (i3 in {1, 2} --
+two callsigns + a grid or signal report) are decoded; free text,
+telemetry, DXpedition mode, and hashed (non-base-37) callsigns are
+real FT8 message types this doesn't cover yet. The sync/candidate
+search only recovers 8 of 21 real signals on the reference recording
+-- WSJT-X's own decoder does meaningfully better (multiple decode
+passes, subtracting already-decoded signals to reveal weaker ones
+underneath, a priori decoding using known callsigns), which is out of
+scope for a first implementation.
+
+**Files added**: `backend/app/services/decoders/ft8_constants.py`,
+`ft8_crc.py`, `ft8_ldpc.py`, `ft8_message.py`, `ft8_decoder.py`,
+`backend/app/db/models/ft8_station.py`,
+`backend/app/services/ft8_stations.py`,
+`backend/app/api/routes/ft8.py`,
+`backend/alembic/versions/0014_add_ft8_stations.py`,
+`backend/tests/test_ft8_{crc,ldpc,message,decoder,stations}.py`,
+`backend/tests/fixtures/ft8/` (the real recording + ground truth +
+provenance note), `frontend/src/api/ft8.ts`,
+`frontend/src/geo/layers/Ft8StationsLayer.ts`. Extended:
+`dsp.py` (USB demod), `stream_service.py`, `api/routes/receivers.py`,
+`api/router.py`, `main.py`, `api/receivers.ts`, `ReceiverCard.tsx`,
+`geo/layers/index.ts`.
+
+## Verification
+
+- Backend: `ruff check .` clean; `pytest` -- 231/231 passing (4 new in
+  `test_ft8_crc.py`, cross-verified against compiled `crc.c`; 2 new in
+  `test_ft8_ldpc.py`, cross-verified against compiled `ldpc.c`
+  including the empirically-discovered LLR sign convention; 8 new in
+  `test_ft8_message.py`, cross-verified against compiled `message.c`;
+  1 new in `test_ft8_decoder.py`, decoding the real off-air recording
+  and asserting every decode matches the published ground truth; 4 new
+  in `test_dsp.py` for `usb_discriminator`; 7 new across
+  `test_ft8_stations.py`/`test_receivers.py` for persistence and the
+  REST toggle).
+- Frontend: `npm run lint` clean (3 pre-existing warnings only);
+  `tsc -b && vite build` clean.
+- **Real hardware, honestly reported**: confirmed the FT8 toggle works
+  correctly against the real attached RTL-SDR (`ft8_enabled: true` in
+  capture-health, clean start/stop, `GET /api/ft8/stations` returns
+  correctly-shaped empty data). Real over-the-air FT8 decoding needs
+  HF coverage (1.8-50MHz) a plain RTL-SDR can't reach without an
+  upconverter or a direct-sampling-capable model -- not available in
+  this environment, so that specific claim rests on the real off-air
+  *recording* test instead, which is a genuine, independently-
+  verifiable real-world signal even though it wasn't captured live
+  here.
+
+## Next Steps
+
+1. Real live FT8 verification needs different hardware (HF + USB
+   demod capability) than what's attached here.
+2. FT4, WSPR, other SSTV modes, RTTY, and the rest of the "Remaining"
+   Digital Modes list are all still open.
+3. FT8 non-standard/free-text/telemetry message types and hashed
+   callsigns remain unsupported; sync/candidate search could recover
+   more than 8/21 with WSJT-X-style multi-pass decoding.
+4. RF Coverage modeling, CME alerts/radio blackouts, AIS Class B, and
+   the rest of the Geospatial Intelligence "Remaining" items are still
+   open.

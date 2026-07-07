@@ -329,16 +329,52 @@ Completed
   via the REST test suite (using the mock receiver plugin to produce
   real IQ samples deterministically) and the synthetic-waveform unit
   tests.
+- **FT8** -- `decoders/ft8_{constants,crc,ldpc,message,decoder}.py`:
+  Costas-sync search + 8-FSK soft-symbol extraction + a from-scratch
+  (174,91) LDPC belief-propagation decoder + standard-message unpack,
+  over each ~15-second UTC-aligned slot. The correctness-critical
+  numeric tables (Costas pattern, Gray map, the LDPC generator/parity-
+  check matrices, CRC-14 polynomial) are parsed programmatically (not
+  hand-transcribed) from the MIT-licensed reference decoder
+  github.com/kgoba/ft8_lib and verified byte-for-byte; the CRC, LDPC,
+  and message-unpack modules are each additionally cross-verified
+  against that same library's real C source, compiled and run
+  directly, bit-for-bit -- including discovering that the LLR sign
+  convention `ldpc.c`'s own comment documents is backwards from what
+  actually works (verified empirically, not assumed). Most
+  importantly: **verified end-to-end against a real, off-air 15-second
+  recording with independently-published ground truth** (21 real
+  stations decoded by WSJT-X in 2019) -- this decoder correctly
+  recovers 8 of those 21 with zero false positives, not just a
+  synthetic round-trip. Decoded stations (call_de, grid, frequency
+  offset) are persisted per receiver and shown as a new **FT8
+  Stations** map layer, positioned at their grid square's centroid.
+  Needed a new demodulator (`dsp.usb_discriminator`) since FT8 is
+  virtually always transmitted USB on HF, not FM.
+- FT8's real-world scope gap, honestly acknowledged: WSJT-X's own
+  decoder does meaningfully better (multiple decode passes,
+  subtracting already-decoded signals to reveal ones they were
+  masking, a priori decoding using known callsigns) -- 8/21 is a
+  reasonable bar for a first from-scratch implementation, not parity
+  with a mature, decade-refined tool.
+- A plain RTL-SDR dongle can't tune to HF (FT8's home, 1.8-50MHz)
+  without an upconverter or a direct-sampling-capable model -- this
+  environment's attached dongle is a general-purpose VHF/UHF unit, so
+  real over-the-air FT8 verification needs different hardware than
+  what's here (same "documented, not chased" pattern as every other
+  hardware-dependent gap in this project).
 
 Remaining
 
-- FT8
 - FT4
 - WSPR
 - Other SSTV modes (Scottie, Robot 36, PD120 -- the mode the ISS
   actually uses for its periodic SSTV events) -- same "sync pulse +
   per-pixel frequency-as-brightness" shape as Martin M1, different
   timing/channel-order tables.
+- FT8 non-standard/free-text/telemetry/DXpedition message types, and
+  hashed (non-base-37) callsigns -- only "standard" (i3 in {1,2})
+  messages are decoded today.
 - RTTY
 - DMR
 - P25

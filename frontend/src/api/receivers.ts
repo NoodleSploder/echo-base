@@ -57,6 +57,11 @@ export const startSstvDecoding = (id: string) =>
 export const stopSstvDecoding = (id: string) =>
   api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/sstv/stop`);
 
+export const startFt8Decoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/ft8/start`);
+export const stopFt8Decoding = (id: string) =>
+  api.post<{ message: string }>(`/api/receivers/${encodeURIComponent(id)}/ft8/stop`);
+
 export interface SstvSnapshot {
   lines_decoded: number;
   total_lines: number;
@@ -119,6 +124,7 @@ export interface CaptureHealth {
   ads_b_enabled?: boolean;
   ais_enabled?: boolean;
   sstv_enabled?: boolean;
+  ft8_enabled?: boolean;
   signal_detection_enabled?: boolean;
   occupancy_enabled?: boolean;
   triggered_recording_armed?: boolean;

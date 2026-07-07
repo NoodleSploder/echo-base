@@ -10,6 +10,7 @@ import {
   startAdsBDecoding,
   startAisDecoding,
   startAprsDecoding,
+  startFt8Decoding,
   startOccupancy,
   startReceiver,
   startSameDecoding,
@@ -19,6 +20,7 @@ import {
   stopAdsBDecoding,
   stopAisDecoding,
   stopAprsDecoding,
+  stopFt8Decoding,
   stopOccupancy,
   stopReceiver,
   stopSameDecoding,
@@ -77,6 +79,8 @@ export function ReceiverCard({
   const [sstvSnapshot, setSstvSnapshot] = useState<{ linesDecoded: number; totalLines: number } | null>(
     null,
   );
+  const [ft8Enabled, setFt8Enabled] = useState(false);
+  const [ft8Busy, setFt8Busy] = useState(false);
   const [scanFrequencies, setScanFrequencies] = useState("");
   const [scanDwellSeconds, setScanDwellSeconds] = useState(2);
   const [scanBusy, setScanBusy] = useState(false);
@@ -224,6 +228,20 @@ export function ReceiverCard({
       setSstvEnabled((prev) => !prev);
     } finally {
       setSstvBusy(false);
+    }
+  }
+
+  async function handleToggleFt8() {
+    setFt8Busy(true);
+    try {
+      if (ft8Enabled) {
+        await stopFt8Decoding(receiver.id);
+      } else {
+        await startFt8Decoding(receiver.id);
+      }
+      setFt8Enabled((prev) => !prev);
+    } finally {
+      setFt8Busy(false);
     }
   }
 
@@ -414,6 +432,7 @@ export function ReceiverCard({
         if (typeof health.ads_b_enabled === "boolean") setAdsBEnabled(health.ads_b_enabled);
         if (typeof health.ais_enabled === "boolean") setAisEnabled(health.ais_enabled);
         if (typeof health.sstv_enabled === "boolean") setSstvEnabled(health.sstv_enabled);
+        if (typeof health.ft8_enabled === "boolean") setFt8Enabled(health.ft8_enabled);
         if (typeof health.signal_detection_enabled === "boolean") {
           setSignalDetectionEnabled(health.signal_detection_enabled);
         }
@@ -736,6 +755,18 @@ export function ReceiverCard({
               title="Slow-Scan TV: tune to a real SSTV frequency (e.g. 145.800MHz FM during an ISS SSTV event) to watch a picture decode live, line by line"
             >
               {sstvEnabled ? "SSTV Decoding On" : "Decode SSTV"}
+            </button>
+            <button
+              onClick={() => void handleToggleFt8()}
+              disabled={ft8Busy}
+              className={`flex-1 rounded-md py-1.5 text-xs font-medium disabled:opacity-50 ${
+                ft8Enabled
+                  ? "bg-accent-500/20 text-accent-400 hover:bg-accent-500/30"
+                  : "border border-base-600 text-slate-300 hover:bg-base-800"
+              }`}
+              title="Tune to a real FT8 frequency (e.g. 14.074MHz USB -- needs HF coverage, not just a plain RTL-SDR's native VHF/UHF range). Decodes appear on the map and in the Activity Feed; a whole ~15s slot has to complete before anything shows up"
+            >
+              {ft8Enabled ? "FT8 Decoding On" : "Decode FT8"}
             </button>
           </div>
         )}

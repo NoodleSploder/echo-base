@@ -30,6 +30,7 @@ from app.schemas.common import fail
 from app.services.adsb_aircraft import persist_adsb_aircraft
 from app.services.ais_vessels import persist_ais_vessel
 from app.services.aprs_stations import persist_aprs_station
+from app.services.ft8_stations import persist_ft8_station
 from app.services.hotplug_monitor import HotplugMonitor
 from app.services.noaa_swpc import SpaceWeatherService
 from app.services.receiver_service import ReceiverService
@@ -139,6 +140,7 @@ async def lifespan(app: FastAPI):
     event_bus.subscribe("AprsPacket", persist_aprs_station)
     event_bus.subscribe("AdsbMessage", persist_adsb_aircraft)
     event_bus.subscribe("AisMessage", persist_ais_vessel)
+    event_bus.subscribe("Ft8Message", persist_ft8_station)
 
     disabled_ids = {plugin_id for plugin_id, enabled in settings.plugins.enabled.items() if not enabled}
     plugin_manager = PluginManager(

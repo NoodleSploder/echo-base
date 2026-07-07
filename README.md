@@ -118,14 +118,23 @@ Integration with existing applications including:
 
 Echo Base orchestrates these applications rather than replacing them.
 
-Built today (a real in-house decoder, not orchestration): **SSTV**
-(Martin M1) -- tune to a real SSTV signal and watch a picture decode
-live, line by line, right in the Receiver card. Two-stage frequency
-recovery (FM discriminator, then a Hilbert-transform instantaneous-
-frequency estimate of the recovered audio's own SSTV tone) feeding a
-sync-tracking image decoder; verified against a synthetic Martin M1
-waveform, same "encode it, decode it, compare" pattern as this
-project's other decoders.
+Built today (real in-house decoders, not orchestration):
+
+- **SSTV** (Martin M1) -- tune to a real SSTV signal and watch a
+  picture decode live, line by line, right in the Receiver card.
+  Two-stage frequency recovery (FM discriminator, then a Hilbert-
+  transform instantaneous-frequency estimate of the recovered audio's
+  own SSTV tone) feeding a sync-tracking image decoder; verified
+  against a synthetic Martin M1 waveform.
+- **FT8** -- Costas-sync search, 8-FSK soft demod, a from-scratch
+  (174,91) LDPC decoder, and standard-message unpack, decoding real
+  callsigns/grids from each 15-second transmission slot. Decoded
+  stations show up on the Geospatial map (positioned at their grid
+  square's centroid) and in the Receiver card. Verified not just
+  synthetically but against a real, off-air 15-second recording with
+  independently-published ground truth (correctly recovered 8 of 21
+  real stations). Needs HF + USB demodulation -- a plain RTL-SDR can't
+  reach HF without an upconverter.
 
 ---
 
@@ -214,6 +223,9 @@ Built today:
 - Aircraft (ADS-B) -- real CPR position decoding (even/odd frame
   pairing per ICAO address), off by default since it needs an active
   wideband 1090MHz capture
+- FT8 stations -- a from-scratch FT8 receiver (Costas sync, 8-FSK
+  demod, LDPC decode), positioned at each station's grid square
+  centroid; off by default since it needs an active HF/USB capture
 
 Layers the framework supports but don't have real position data behind
 them yet (see `ROADMAP.md`'s Phase 17 for specifics):

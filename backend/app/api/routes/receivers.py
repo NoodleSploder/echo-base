@@ -378,6 +378,28 @@ async def stop_sstv_decoding(
     return ok({"message": "SSTV decoding disabled.", "receiver_id": receiver_id})
 
 
+@router.post("/{receiver_id}/ft8/start")
+async def start_ft8_decoding(
+    receiver_id: str,
+    service: ReceiverService = Depends(get_receiver_service),
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await service.status(receiver_id)
+    await stream_service.enable_ft8(receiver_id)
+    return ok({"message": "FT8 decoding enabled.", "receiver_id": receiver_id})
+
+
+@router.post("/{receiver_id}/ft8/stop")
+async def stop_ft8_decoding(
+    receiver_id: str,
+    stream_service: StreamService = Depends(get_stream_service),
+    _: User = Depends(require_operator),
+) -> dict:
+    await stream_service.disable_ft8(receiver_id)
+    return ok({"message": "FT8 decoding disabled.", "receiver_id": receiver_id})
+
+
 @router.get("/{receiver_id}/sstv")
 async def get_sstv_snapshot(
     receiver_id: str,

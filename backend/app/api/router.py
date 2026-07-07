@@ -12,6 +12,7 @@ from app.api.routes import (
     config,
     dashboard,
     events,
+    ft8,
     plugins,
     receiver_profiles,
     receivers,
@@ -39,5 +40,6 @@ api_router.include_router(recordings.router)
 api_router.include_router(aprs.router)
 api_router.include_router(adsb.router)
 api_router.include_router(ais.router)
+api_router.include_router(ft8.router)
 api_router.include_router(satellites.router)
 api_router.include_router(space_weather.router)

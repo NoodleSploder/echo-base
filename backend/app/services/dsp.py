@@ -58,7 +58,29 @@ def am_demodulate(iq: np.ndarray, decimation: int) -> bytes:
     return _to_pcm16(decimated)
 
 
+def usb_discriminator(iq: np.ndarray, decimation: int) -> np.ndarray:
+    """Upper-sideband SSB demod (needed for FT8, which is virtually
+    always transmitted USB on HF): taking the real part of the complex
+    baseband directly recovers the audio, *provided* the receiver is
+    tuned to the conventional USB dial frequency (the suppressed-
+    carrier point, with the voice/tone passband sitting entirely above
+    it in baseband) -- the same simple technique general-purpose SDR
+    software (GQRX, SDR#) uses for SSB; no Hilbert-transform sideband-
+    selecting filter is needed when that tuning convention is
+    followed. Raw float output, not yet AGC'd/quantized -- shared by
+    `usb_demodulate` (for playback) and FT8 decoding."""
+    if len(iq) == 0:
+        return np.zeros(0, dtype=np.float32)
+    return _decimate_mean(np.real(iq), decimation)
+
+
+def usb_demodulate(iq: np.ndarray, decimation: int) -> bytes:
+    """Upper sideband (USB), AGC'd and quantized to PCM16 for playback."""
+    return _to_pcm16(usb_discriminator(iq, decimation))
+
+
 DEMODULATORS = {
     "fm": fm_demodulate,
     "am": am_demodulate,
+    "usb": usb_demodulate,
 }

@@ -101,6 +101,21 @@ async def test_sstv_start_stop_and_query_via_rest(client, admin_user):
     assert after_stop.status_code == 422
 
 
+async def test_ft8_start_stop_via_rest(client, admin_user):
+    await client.post("/api/auth/login", json=admin_user)
+
+    start = await client.post("/api/receivers/mock:0/ft8/start")
+    assert start.status_code == 200
+
+    await asyncio.sleep(0.3)
+
+    health = await client.get("/api/receivers/mock:0/capture-health")
+    assert health.json()["data"]["ft8_enabled"] is True
+
+    stop = await client.post("/api/receivers/mock:0/ft8/stop")
+    assert stop.status_code == 200
+
+
 async def test_status_reflects_real_capture_without_start(client, admin_user):
     """A spectrum/audio subscriber makes IQ actually flow even if the
     user never clicked Start -- the reported state should say so."""

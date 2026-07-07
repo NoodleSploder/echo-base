@@ -5,5 +5,6 @@
 import "./AdsbAircraftLayer";
 import "./AprsStationsLayer";
 import "./AuroraLayer";
+import "./Ft8StationsLayer";
 import "./ReceiverSitesLayer";
 import "./SatelliteTrackLayer";
