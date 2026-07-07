@@ -2,6 +2,12 @@ import type { ComponentType } from "react";
 import type { CaptureHealth } from "../api/receivers";
 
 export interface FrequencyBand {
+  /** The actual frequency to tune a receiver to when this band is
+   * picked from a decoder panel's "tune to" dropdown -- distinct from
+   * `minHz`/`maxHz` below, which describe a *range* still considered
+   * "in band" (e.g. FT8's ~3.5kHz USB passband above its dial
+   * frequency), not necessarily centered on `hz`. */
+  hz: number;
   minHz: number;
   maxHz: number;
   label: string;
@@ -20,9 +26,7 @@ export interface DecoderDefinition {
    * decoder can list several (e.g. FT8's many HF dial frequencies). */
   bands: FrequencyBand[];
   /** Which field of `GET .../capture-health` reflects this decoder's
-   * enabled state -- lets ReceiverDecoders stay in sync with the
-   * backend from one shared poll instead of each decoder polling
-   * separately. */
+   * enabled state. */
   healthKey: keyof CaptureHealth;
   start: (receiverId: string) => Promise<unknown>;
   stop: (receiverId: string) => Promise<unknown>;

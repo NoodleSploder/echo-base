@@ -7,7 +7,10 @@ registerDecoder({
   name: "AIS",
   description:
     "Tune to a marine AIS channel (161.975MHz/162.025MHz) to decode anything real -- decoded vessels appear in the Activity Feed and System Log widgets.",
-  bands: [{ minHz: 161_900_000, maxHz: 162_100_000, label: "Marine AIS (161.975/162.025MHz)" }],
+  bands: [
+    { hz: 161_975_000, minHz: 161_900_000, maxHz: 162_000_000, label: "AIS Channel A (161.975MHz)" },
+    { hz: 162_025_000, minHz: 162_000_000, maxHz: 162_100_000, label: "AIS Channel B (162.025MHz)" },
+  ],
   healthKey: "ais_enabled",
   start: startAisDecoding,
   stop: stopAisDecoding,

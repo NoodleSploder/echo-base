@@ -5634,3 +5634,47 @@ always handled newly-added widgets.
   warnings only).
 - Backend: untouched; 231/231 still passing.
 - No browser here to confirm the widget's actual grid placement.
+
+## Added: band-select tuning dropdown on decoder panels, receiver attribution on FT8 messages
+
+Direct follow-up request: on the Digital Modes page, each decoder panel
+should let you pick a standard band from a dropdown and have it tune
+the selected receiver there directly, rather than only reporting
+whether the receiver's *current* tuning happens to be in range.
+
+- `FrequencyBand` (`decoders/types.ts`) gained an `hz` field -- the
+  exact dial frequency to tune to -- distinct from the existing
+  `minHz`/`maxHz`, which still describe the "in band" range used for
+  the out-of-band de-emphasis styling (a band's usable range isn't
+  necessarily centered on its own dial frequency, e.g. FT8's ~3.5kHz
+  USB passband sits entirely above it).
+- Every registered decoder's band list was updated with real `hz`
+  values. FT8's band list was replaced outright with the user's exact
+  13-band ham plan (160m through 70cm); ADS-B, AIS, APRS, and SAME
+  gained per-channel `hz` entries instead of a single vague range each
+  (AIS Channel A/B, APRS NA/EU, all 7 real NOAA SAME channels).
+- `DecoderPanel.tsx` gained a second `<select>` below the receiver
+  picker, populated from `decoder.bands`, calling the existing
+  `tuneReceiver` API and disabled while a receiver isn't selected, the
+  decoder is running, or a tune is in flight. It resets back to its
+  placeholder after each tune (a one-shot action, not a persistent
+  selection) rather than trying to track "current band" as state.
+- `Ft8StationsPanel` (used both as the Digital Modes FT8 panel's live
+  view and as the Dashboard's `Ft8MessagesWidget`) gained a "Receiver"
+  column resolving each message's `receiver_id` to the receiver's
+  friendly name (falling back to the raw id if a receiver's since been
+  removed), so messages from multiple simultaneously-configured FT8
+  panels are distinguishable on the Dashboard. The column is hidden
+  entirely in the single-receiver DecoderPanel context, where it'd be
+  redundant.
+- Map integration needed no changes: the pre-existing
+  `Ft8StationsLayer.ts` (built during the original FT8 feature work)
+  already plots every station with a resolved grid position, polling
+  the same `listFt8Stations()` endpoint.
+
+### Verification
+
+- Frontend: `tsc -b`, `vite build`, `eslint` all clean (same 3
+  pre-existing warnings, no new ones).
+- Backend: untouched; 231/231 passing.
+- No browser here to confirm the dropdown/table rendering live.

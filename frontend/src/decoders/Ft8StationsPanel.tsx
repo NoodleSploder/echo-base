@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { listFt8Stations, type Ft8Station } from "../api/ft8";
+import { listReceivers } from "../api/receivers";
 
 const POLL_INTERVAL_MS = 10000;
+const RECEIVER_POLL_MS = 15000;
 
 // Last-known contact per call_de (see ft8_stations.py) -- real data
 // once a receiver is decoding FT8, tuned to a real dial frequency
@@ -14,6 +16,7 @@ const POLL_INTERVAL_MS = 10000;
 // AdsbAircraftPanel/AisVesselsPanel.
 export function Ft8StationsPanel({ receiverId }: { receiverId?: string } = {}) {
   const [stations, setStations] = useState<Ft8Station[]>([]);
+  const [receiverNames, setReceiverNames] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -33,6 +36,30 @@ export function Ft8StationsPanel({ receiverId }: { receiverId?: string } = {}) {
     };
   }, [receiverId]);
 
+  // Only needed to turn `receiver_id`s (like "rtl_sdr:00000001") into
+  // friendly names for the shared Dashboard view, where messages from
+  // several receivers are mixed together -- when `receiverId` is given
+  // (a single-receiver DecoderPanel view), every row is already known
+  // to be that one receiver, so this lookup is skipped entirely.
+  useEffect(() => {
+    if (receiverId) return;
+    let cancelled = false;
+    async function poll() {
+      try {
+        const data = await listReceivers();
+        if (!cancelled) setReceiverNames(Object.fromEntries(data.map((r) => [r.id, r.name])));
+      } catch {
+        // Transient poll failure; keep showing the last good mapping.
+      }
+    }
+    void poll();
+    const interval = setInterval(poll, RECEIVER_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [receiverId]);
+
   if (stations.length === 0) {
     return <p className="text-xs text-slate-500">No stations decoded yet.</p>;
   }
@@ -42,6 +69,7 @@ export function Ft8StationsPanel({ receiverId }: { receiverId?: string } = {}) {
       <thead className="text-slate-500">
         <tr>
           <th className="pb-1 font-medium">Callsign</th>
+          {!receiverId && <th className="pb-1 font-medium">Receiver</th>}
           <th className="pb-1 font-medium">Grid</th>
           <th className="pb-1 font-medium">Message</th>
           <th className="pb-1 font-medium">Freq offset</th>
@@ -53,6 +81,9 @@ export function Ft8StationsPanel({ receiverId }: { receiverId?: string } = {}) {
         {stations.map((s) => (
           <tr key={`${s.receiver_id}-${s.callsign}`} className="border-t border-base-800">
             <td className="py-1 font-medium text-accent-400">{s.callsign}</td>
+            {!receiverId && (
+              <td className="py-1 text-slate-400">{receiverNames[s.receiver_id] ?? s.receiver_id}</td>
+            )}
             <td className="py-1 text-slate-400">{s.grid ?? "-"}</td>
             <td className="py-1 text-slate-400">{s.last_message}</td>
             <td className="py-1 text-slate-400">{s.frequency_offset_hz.toFixed(0)}Hz</td>

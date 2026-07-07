@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getCaptureHealth, getReceiver, listReceivers } from "../api/receivers";
+import { useEffect, useState, type ChangeEvent } from "react";
+import { getCaptureHealth, getReceiver, listReceivers, tuneReceiver } from "../api/receivers";
 import type { ReceiverDescriptor } from "../types";
 import { Card } from "../components/common/Card";
 import { isInBand } from "./DecoderRegistry";
@@ -23,6 +23,7 @@ export function DecoderPanel({ decoder }: { decoder: DecoderDefinition }) {
   const [frequencyHz, setFrequencyHz] = useState<number | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tuning, setTuning] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +76,19 @@ export function DecoderPanel({ decoder }: { decoder: DecoderDefinition }) {
     else localStorage.removeItem(storageKey);
   }
 
+  async function handleBandChange(event: ChangeEvent<HTMLSelectElement>) {
+    const hz = Number(event.target.value);
+    event.target.value = ""; // a one-shot action ("tune now"), not a persistent selection
+    if (!receiverId || !Number.isFinite(hz) || hz <= 0) return;
+    setTuning(true);
+    try {
+      const status = await tuneReceiver(receiverId, hz);
+      setFrequencyHz(status.frequency_hz ?? hz);
+    } finally {
+      setTuning(false);
+    }
+  }
+
   async function handleToggle() {
     if (!receiverId) return;
     setBusy(true);
@@ -115,6 +129,26 @@ export function DecoderPanel({ decoder }: { decoder: DecoderDefinition }) {
               </option>
             ))}
           </select>
+        </div>
+
+        {decoder.bands.length > 0 && (
+          <select
+            defaultValue=""
+            onChange={(event) => void handleBandChange(event)}
+            disabled={!receiverId || enabled || tuning}
+            title="Tune the selected receiver to one of this decoder's standard frequencies"
+            className="w-full rounded-md border border-base-600 bg-base-800 px-2 py-1 text-xs text-slate-200 disabled:opacity-50"
+          >
+            <option value="">{tuning ? "Tuning..." : "Tune to band..."}</option>
+            {decoder.bands.map((band) => (
+              <option key={band.label} value={band.hz}>
+                {band.label}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="flex gap-2">
           <button
             type="button"
             onClick={() => void handleToggle()}
